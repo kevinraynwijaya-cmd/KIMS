@@ -1,111 +1,96 @@
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
 
-            return HttpService:RequestAsync({
-
-                Url = API_URL,
-
-                Method = "POST",
-
-                Headers = {
-
-                    ["Content-Type"] =
-                        "application/json",
-
-                    ["Authorization"] =
-                        "Bearer " .. API_KEY
-                },
-
-                Body =
-                    HttpService:JSONEncode(payload)
-            })
-
-        end)
-
-    if ok
-        and response
-        and response.Success then
-
-        print(
-            "[KIMS] LUCK V6 UPLOAD OK"
-        )
-
-    else
-
-        warn(
-            "[KIMS] LUCK V6 UPLOAD FAILED"
-        )
-
-        if response then
-
-            warn(
-                "[KIMS] HTTP:",
-                response.StatusCode,
-                response.StatusMessage
-            )
-
-        else
-
-            warn(
-                "[KIMS] ERROR:",
-                tostring(response)
-            )
-
-        end
-    end
-end
+local p = Players.LocalPlayer
+local pg = p:WaitForChild("PlayerGui")
 
 -- =========================================================
--- CHANGE DETECTION
+-- CONFIG
 -- =========================================================
 
-local lastSignature = nil
+local API_URL = "https://kims.asia/statakun/api/debug.php"
+local API_KEY = "stat-kims2026"
+local INTERVAL = 1
 
-local function scan()
+-- =========================================================
+-- HELPERS
+-- =========================================================
 
-    local state =
-        getLuckState()
-
-    local signature =
-        HttpService:JSONEncode({
-
-            multiplier =
-                state and state.multiplier,
-
-            timer =
-                state and state.timerText,
-
-            seconds =
-                state and state.timerSeconds,
-
-            source =
-                state and state.source,
-
-            timerPath =
-                state and state.timerPath,
-
-            multiplierPath =
-                state and state.multiplierPath
-        })
-
-    -- First scan always sends.
-    -- Later scans send only when the detected state changes.
-    if signature ~= lastSignature then
-
-        lastSignature =
-            signature
-
-        send(state)
-
+local function textOf(obj)
+    if not obj then
+        return ""
     end
+
+    local ok, value = pcall(function()
+        return obj.Text
+    end)
+
+    if ok and value ~= nil then
+        return tostring(value)
+    end
+
+    return ""
 end
 
--- FIRST SCAN
-scan()
-
--- CONTINUOUS STATE CHECK
-task.spawn(function()
-
-    while task.wait(INTERVAL) do
-        scan()
+local function fullNameOf(obj)
+    if not obj then
+        return ""
     end
 
-end)
+    local ok, value = pcall(function()
+        return obj:GetFullName()
+    end)
+
+    if ok and value then
+        return tostring(value)
+    end
+
+    return ""
+end
+
+local function parseMultiplier(text)
+    text = tostring(text or "")
+
+    local n =
+        text:match("[xX×]%s*(%d+)")
+        or text:match("(%d+)%s*[xX×]")
+
+    return tonumber(n)
+end
+
+local function parseTimer(text)
+    text = tostring(text or "")
+
+    local h, m, s =
+        text:match("(%d+)%s*[hH]%s*(%d+)%s*[mM]%s*(%d+)%s*[sS]")
+
+    if h then
+        return tonumber(h) * 3600
+            + tonumber(m) * 60
+            + tonumber(s)
+    end
+
+    local m2, s2 =
+        text:match("(%d+)%s*[mM]%s*(%d+)%s*[sS]")
+
+    if m2 then
+        return tonumber(m2) * 60 + tonumber(s2)
+    end
+
+    local onlySeconds =
+        text:match("(%d+)%s*[sS]")
+
+    if onlySeconds then
+        return tonumber(onlySeconds)
+    end
+
+    local hh, mm, ss =
+        text:match("(%d+):(%d+):(%d+)")
+
+    if hh then
+        return tonumber(hh) * 3600
+            + tonumber(mm) * 60
+            + tonumber(ss)
+    end
+
+    return nil
