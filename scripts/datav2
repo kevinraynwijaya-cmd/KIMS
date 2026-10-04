@@ -1,96 +1,111 @@
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local Lighting = game:GetService("Lighting")
-local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
 
-local p = Players.LocalPlayer
-local pg = p:WaitForChild("PlayerGui")
+            return HttpService:RequestAsync({
 
--- =========================================
--- CONFIG
--- =========================================
+                Url = API_URL,
 
-local MAX_SNAPSHOTS = 6
-local INTERVAL = 1
+                Method = "POST",
 
-local MAX_OBJECTS = 20
-local MAX_VALUES = 20
-local MAX_ATTRIBUTES = 20
-local MAX_TARGETS = 40
+                Headers = {
 
-local snapshots = {}
-local attributes = {}
-local objects = {}
-local values = {}
-local targetSeen = {}
+                    ["Content-Type"] =
+                        "application/json",
 
--- =========================================
--- HELPERS
--- =========================================
+                    ["Authorization"] =
+                        "Bearer " .. API_KEY
+                },
 
-local function safe(fn, fallback)
-    local ok, result = pcall(fn)
-    if ok then return result end
-    return fallback
+                Body =
+                    HttpService:JSONEncode(payload)
+            })
+
+        end)
+
+    if ok
+        and response
+        and response.Success then
+
+        print(
+            "[KIMS] LUCK V6 UPLOAD OK"
+        )
+
+    else
+
+        warn(
+            "[KIMS] LUCK V6 UPLOAD FAILED"
+        )
+
+        if response then
+
+            warn(
+                "[KIMS] HTTP:",
+                response.StatusCode,
+                response.StatusMessage
+            )
+
+        else
+
+            warn(
+                "[KIMS] ERROR:",
+                tostring(response)
+            )
+
+        end
+    end
 end
 
-local function addObject(path, className, text)
-    if #objects >= MAX_OBJECTS then return end
+-- =========================================================
+-- CHANGE DETECTION
+-- =========================================================
 
-    table.insert(objects, {
-        path = tostring(path or ""),
-        className = tostring(className or ""),
-        text = tostring(text or "")
-    })
+local lastSignature = nil
+
+local function scan()
+
+    local state =
+        getLuckState()
+
+    local signature =
+        HttpService:JSONEncode({
+
+            multiplier =
+                state and state.multiplier,
+
+            timer =
+                state and state.timerText,
+
+            seconds =
+                state and state.timerSeconds,
+
+            source =
+                state and state.source,
+
+            timerPath =
+                state and state.timerPath,
+
+            multiplierPath =
+                state and state.multiplierPath
+        })
+
+    -- First scan always sends.
+    -- Later scans send only when the detected state changes.
+    if signature ~= lastSignature then
+
+        lastSignature =
+            signature
+
+        send(state)
+
+    end
 end
 
-local function addValue(path, className, value)
-    if #values >= MAX_VALUES then return end
+-- FIRST SCAN
+scan()
 
-    table.insert(values, {
-        path = tostring(path or ""),
-        className = tostring(className or ""),
-        value = tostring(value)
-    })
-end
+-- CONTINUOUS STATE CHECK
+task.spawn(function()
 
-local function addAttribute(path, name, value)
-    if #attributes >= MAX_ATTRIBUTES then return end
+    while task.wait(INTERVAL) do
+        scan()
+    end
 
-    table.insert(attributes, {
-        path = tostring(path or ""),
-        name = tostring(name or ""),
-        value = tostring(value)
-    })
-end
-
-local function addSnapshot(label, path, text)
-    if #snapshots >= MAX_SNAPSHOTS then return end
-
-    table.insert(snapshots, {
-        index = #snapshots + 1,
-        timestamp = os.time(),
-        label = tostring(label or ""),
-        path = tostring(path or ""),
-        text = tostring(text or "")
-    })
-end
-
-local function getFullName(obj)
-    return safe(function()
-        return obj:GetFullName()
-    end, "?")
-end
-
-local function isIgnored(path)
-    return tostring(path):find("NextLuckCounter", 1, true) ~= nil
-end
-
-local function parseMultiplier(value)
-    if value == nil then return nil end
-
-    local s = tostring(value):lower()
-
-    local n =
+end)
