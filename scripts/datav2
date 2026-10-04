@@ -1,274 +1,126 @@
--- LuckScannerV3.lua
--- Debug/telemetry scanner for an authorized Roblox experience.
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService = game:GetService("HttpService")
+    if state then
+        addObject(
+            objects,
+            "SERVER_LUCK.Active",
+            "ServerLuck",
+            state.multiplier
+                and ("Multiplier: x" .. tostring(state.multiplier))
+                or "Multiplier: Not detected"
+        )
 
-local LocalPlayer = Players.LocalPlayer
-local API_URL = "https://kims.asia/statakun/api/debug.php"
-local API_KEY = "stat-kims2026"
-local SCAN_INTERVAL = 2
-local MAX_GUI_OBJECTS = 8000
-local MAX_RS_OBJECTS = 5000
+        addObject(
+            objects,
+            "SERVER_LUCK.Timer",
+            "ServerLuckTimer",
+            state.timerText ~= ""
+                and ("Timer: " .. state.timerText)
+                or "Timer: Not detected"
+        )
 
-local BLACKLIST = { NextLuckCounter = true }
+        addObject(
+            objects,
+            "SERVER_LUCK.Source",
+            "ServerLuckSource",
+            state.source
+        )
 
-local function safe(fn, fallback)
-    local ok, value = pcall(fn)
-    return ok and value or fallback
-end
-
-local function pathOf(obj)
-    return safe(function() return obj:GetFullName() end, "?")
-end
-
-local function parseMultiplier(value)
-    if value == nil then return nil end
-    local s = tostring(value):lower()
-    local n = s:match("[x×]%s*(%d+)") or s:match("(%d+)%s*[x×]")
-    if not n then n = s:match("luckmultiplier[^%d]*(%d+)") end
-    n = tonumber(n)
-    if n == 2 or n == 4 or n == 6 or n == 8 then return n end
-end
-
-local function parseCountdown(value)
-    if value == nil then return nil end
-    local s = tostring(value)
-    local h,m,sec = s:match("(%d+)%s*[hH]%s*(%d+)%s*[mM]%s*(%d+)%s*[sS]")
-    if h then return tonumber(h)*3600 + tonumber(m)*60 + tonumber(sec), s end
-    h,m,sec = s:match("(%d+):(%d+):(%d+)")
-    if h then return tonumber(h)*3600 + tonumber(m)*60 + tonumber(sec), s end
-    m,sec = s:match("(%d+)%s*[mM]%s*(%d+)%s*[sS]")
-    if m then return tonumber(m)*60 + tonumber(sec), s end
-    sec = s:match("(%d+)%s*[sS]")
-    if sec then return tonumber(sec), s end
-end
-
-local function addUnique(list, seen, item)
-    local key = item.path.."|"..item.kind.."|"..tostring(item.value or item.text or "")
-    if not seen[key] then
-        seen[key] = true
-        table.insert(list, item)
-    end
-end
-
-local function scanRoot(root, rootName, maxObjects)
-    local out, seen, count = {}, {}, 0
-    local descendants = safe(function() return root:GetDescendants() end, {})
-    for _, obj in ipairs(descendants) do
-        if count >= maxObjects then break end
-        count += 1
-
-        local path = pathOf(obj)
-        local ignored = false
-        for name in pairs(BLACKLIST) do
-            if path:find(name, 1, true) then ignored = true break end
+        if state.timerPath ~= "" then
+            addObject(
+                objects,
+                state.timerPath,
+                "TextLabel",
+                state.timerText
+            )
         end
 
-        if not ignored then
-            local text
-            if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
-                text = safe(function() return obj.Text end, "")
-            end
-            if text ~= nil and text ~= "" then
-                addUnique(out, seen, {
-                    root=rootName, path=path, className=obj.ClassName,
-                    kind="text", text=tostring(text)
-                })
-            end
-
-            local attrs = safe(function() return obj:GetAttributes() end, {})
-            for name,value in pairs(attrs) do
-                addUnique(out, seen, {
-                    root=rootName, path=path, className=obj.ClassName,
-                    kind="attribute", attribute=name, value=tostring(value)
-                })
-            end
-
-            if obj:IsA("IntValue") or obj:IsA("NumberValue")
-                or obj:IsA("StringValue") or obj:IsA("BoolValue") then
-                local value = safe(function() return obj.Value end, nil)
-                if value ~= nil then
-                    addUnique(out, seen, {
-                        root=rootName, path=path, className=obj.ClassName,
-                        kind="value", value=tostring(value)
-                    })
-                end
-            end
+        if state.multiplierPath ~= "" then
+            addValue(
+                values,
+                state.multiplierPath,
+                "LuckMultiplier",
+                state.multiplier or "Unknown"
+            )
         end
-    end
-    return out
-end
 
-local function addKnownLuckPaths(snapshot)
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if not pg then return end
-    local candidates = {}
-
-    safe(function()
-        local luck = pg:WaitForChild("Exclusive Store",1).Main.Content.Frame.Items.SERVER_LUCK["Server Luck"]
-        table.insert(candidates, luck.Inside.Toggles.Timer)
-        table.insert(candidates, luck.Content.Visual.BaseCounter)
-        table.insert(candidates, luck.GameLuckDisplayFrame)
-    end)
-
-    safe(function()
-        local luck = pg:WaitForChild("!!! Server Luck",1).Frame["Server Luck"]
-        table.insert(candidates, luck.Inside.Toggles.Timer)
-    end)
-
-    for _,obj in ipairs(candidates) do
-        if obj then
-            table.insert(snapshot.knownPaths, {
-                path=pathOf(obj),
-                className=obj.ClassName,
-                text=safe(function() return obj.Text end, ""),
-                attributes=safe(function()
-                    local a={}
-                    for k,v in pairs(obj:GetAttributes()) do a[k]=tostring(v) end
-                    return a
-                end,{})
-            })
+        if state.timerSeconds then
+            addValue(
+                values,
+                "SERVER_LUCK.TimerSeconds",
+                "CountdownSeconds",
+                state.timerSeconds
+            )
         end
-    end
-end
 
-local function buildSnapshot()
-    local snapshot = {
-        version="LUCK-SCANNER-V3",
-        userId=LocalPlayer.UserId,
-        username=LocalPlayer.Name,
-        timestamp=os.time(),
-        knownPaths={},
-        objects={},
-        candidates={}
+        if state.multiplier then
+            attributes["ActiveLuckMultiplier"] =
+                "x" .. tostring(state.multiplier)
+        end
+
+        if state.timerText ~= "" then
+            attributes["ActiveLuckTimer"] = state.timerText
+        end
+
+        if state.source ~= "" then
+            attributes["ActiveLuckSource"] = state.source
+        end
+    else
+        addObject(
+            objects,
+            "SERVER_LUCK",
+            "ServerLuck",
+            "Server Luck UI not found"
+        )
+    end
+
+    local payload = {
+        version = "LUCK-WEB-DEBUG-V2",
+        userId = player.UserId,
+        username = player.Name,
+        clientTimestamp = os.time(),
+
+        -- These MUST stay top-level for the current debug.php.
+        attributes = attributes,
+        objects = objects,
+        values = values
     }
 
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if pg then snapshot.objects.PlayerGui=scanRoot(pg,"PlayerGui",MAX_GUI_OBJECTS) end
-    snapshot.objects.ReplicatedStorage=scanRoot(ReplicatedStorage,"ReplicatedStorage",MAX_RS_OBJECTS)
-    addKnownLuckPaths(snapshot)
-
-    for rootName,objects in pairs(snapshot.objects) do
-        for _,item in ipairs(objects) do
-            local source=item.text or item.value
-            local multiplier=parseMultiplier(source)
-            local seconds,timerText=parseCountdown(source)
-            if multiplier or seconds then
-                table.insert(snapshot.candidates,{
-                    root=rootName, path=item.path, kind=item.kind,
-                    text=item.text, value=item.value, attribute=item.attribute,
-                    multiplier=multiplier, countdownSeconds=seconds,
-                    countdownText=timerText
-                })
-            end
-        end
-    end
-
-    for _,item in ipairs(snapshot.knownPaths) do
-        local text=item.text or ""
-        local multiplier=parseMultiplier(text)
-        local seconds,timerText=parseCountdown(text)
-
-        for name,value in pairs(item.attributes or {}) do
-            multiplier=multiplier or parseMultiplier(value)
-            local s,t=parseCountdown(value)
-            seconds=seconds or s
-            timerText=timerText or t
-            if multiplier or seconds then
-                table.insert(snapshot.candidates,{
-                    root="KnownPath", path=item.path, kind="known_attribute",
-                    attribute=name, value=value, multiplier=multiplier,
-                    countdownSeconds=seconds, countdownText=timerText
-                })
-            end
-        end
-
-        if multiplier or seconds then
-            table.insert(snapshot.candidates,{
-                root="KnownPath", path=item.path, kind=item.className,
-                text=text, multiplier=multiplier,
-                countdownSeconds=seconds, countdownText=timerText
-            })
-        end
-    end
-    return snapshot
-end
-
-local function post(payload)
-    return safe(function()
-        return HttpService:RequestAsync({
-            Url=API_URL, Method="POST",
-            Headers={
-                ["Content-Type"]="application/json",
-                ["Authorization"]="Bearer "..API_KEY
+    pcall(function()
+        HttpService:RequestAsync({
+            Url = API_URL,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json",
+                ["Authorization"] = "Bearer " .. API_KEY
             },
-            Body=HttpService:JSONEncode(payload)
+            Body = HttpService:JSONEncode(payload)
         })
-    end,nil)
+    end)
 end
 
-local function indexCandidates(snapshot)
-    local result={}
-    for _,c in ipairs(snapshot.candidates) do
-        result[c.path]={
-            multiplier=c.multiplier,
-            countdownSeconds=c.countdownSeconds,
-            countdownText=c.countdownText,
-            text=c.text, value=c.value
-        }
-    end
-    return result
-end
+local lastSignature = nil
 
-local previous
-do
-    local snapshot=buildSnapshot()
-    previous=indexCandidates(snapshot)
-    post({
-        version=snapshot.version, mode="initial",
-        userId=snapshot.userId, username=snapshot.username,
-        timestamp=snapshot.timestamp, snapshot=snapshot
+local function scan()
+    local state = getLuckState()
+
+    local signature = HttpService:JSONEncode({
+        multiplier = state and state.multiplier,
+        timer = state and state.timerText,
+        seconds = state and state.timerSeconds,
+        source = state and state.source
     })
+
+    -- First scan always sends.
+    -- Later scans send whenever Luck state changes.
+    if signature ~= lastSignature then
+        lastSignature = signature
+        send(state)
+    end
 end
+
+scan()
 
 task.spawn(function()
-    while task.wait(SCAN_INTERVAL) do
-        local snapshot=buildSnapshot()
-        local current=indexCandidates(snapshot)
-        local changes={}
-
-        for path,now in pairs(current) do
-            local old=previous[path]
-            if old then
-                local mc=old.multiplier~=now.multiplier
-                    and (old.multiplier~=nil or now.multiplier~=nil)
-                local tc=old.countdownSeconds~=now.countdownSeconds
-                    and (old.countdownSeconds~=nil or now.countdownSeconds~=nil)
-
-                if mc or tc then
-                    table.insert(changes,{
-                        path=path,
-                        multiplierOld=old.multiplier,
-                        multiplierNew=now.multiplier,
-                        countdownOld=old.countdownSeconds,
-                        countdownNew=now.countdownSeconds,
-                        countdownText=now.countdownText,
-                        text=now.text, value=now.value
-                    })
-                end
-            end
-        end
-
-        if #changes>0 then
-            post({
-                version="LUCK-SCANNER-V3", mode="runtime_change",
-                userId=LocalPlayer.UserId, username=LocalPlayer.Name,
-                timestamp=os.time(), changes=changes,
-                candidates=snapshot.candidates,
-                knownPaths=snapshot.knownPaths
-            })
-        end
-        previous=current
+    while task.wait(INTERVAL) do
+        scan()
     end
 end)
