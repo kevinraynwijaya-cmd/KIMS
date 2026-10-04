@@ -1,354 +1,1077 @@
+--[[
+    KIMS - FULL SERVER LUCK DIAGNOSTIC
+
+    Based on the known-working KIMS diagnostic uploader.
+
+    PURPOSE:
+    Find the actual active Server Luck state and countdown source.
+
+    IMPORTANT:
+    NextLuckCounter is intentionally ignored as active state.
+
+    This script:
+    - scans known Server Luck GUI branches
+    - scans descendants
+    - reads Text properties
+    - reads ValueBase values
+    - reads Attributes
+    - tracks changing values
+    - performs repeated snapshots
+    - records exact object paths
+    - uploads everything to debug.php
+]]
+
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 
 local p = Players.LocalPlayer
 local pg = p:WaitForChild("PlayerGui")
 
--- =========================================
+-- =========================================================
 -- CONFIG
--- =========================================
+-- =========================================================
 
-local MAX_SNAPSHOTS = 6
-local INTERVAL = 1
+local SNAPSHOT_COUNT = 15
+local SNAPSHOT_INTERVAL = 1
 
-local snapshots = {}
-local attributes = {}
+local MAX_OBJECTS = 1000
+local MAX_VALUES = 1000
+local MAX_ATTRIBUTES = 1000
+local MAX_SNAPSHOTS = 5000
+local MAX_CHANGES = 2000
+local MAX_ERRORS = 500
+
+local API_URL = "https://kims.asia/statakun/api/debug.php"
+local API_KEY = "stat-kims2026"
+
+-- =========================================================
+-- STORAGE
+-- =========================================================
+
 local objects = {}
 local values = {}
+local attributes = {}
+local snapshots = {}
+local changes = {}
+local errors = {}
 
--- =========================================
+local counters = {
+    objects = 0,
+    values = 0,
+    attributes = 0,
+    snapshots = 0,
+    changes = 0,
+    errors = 0
+}
+
+-- =========================================================
 -- HELPERS
--- =========================================
+-- =========================================================
 
-local function addObject(path, className, text)
-    if #objects >= 20 then
+local function safeString(value)
+    local ok, result = pcall(function()
+        return tostring(value)
+    end)
+
+    if ok then
+        return result
+    end
+
+    return ""
+end
+
+local function shouldIgnorePath(path)
+    path = string.lower(path or "")
+
+    -- Explicitly ignore NextLuckCounter.
+    if string.find(path, "nextluckcounter", 1, true) then
+        return true
+    end
+
+    return false
+end
+
+local function keywordMatch(text)
+    text = string.lower(text or "")
+
+    local keywords = {
+        "luck",
+        "timer",
+        "counter",
+        "duration",
+        "remaining",
+        "remain",
+        "multiplier",
+        "base",
+        "time",
+        "seconds",
+        "minute",
+        "minutes",
+        "hour",
+        "hours",
+        "active",
+        "server"
+    }
+
+    for _, keyword in ipairs(keywords) do
+        if string.find(text, keyword, 1, true) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function addError(stage, message)
+    if counters.errors >= MAX_ERRORS then
         return
     end
+
+    counters.errors += 1
+
+    table.insert(errors, {
+        stage = stage,
+        message = safeString(message),
+        timestamp = os.time()
+    })
+end
+
+local function addObject(path, className, text, matched)
+    if counters.objects >= MAX_OBJECTS then
+        return
+    end
+
+    if shouldIgnorePath(path) then
+        return
+    end
+
+    counters.objects += 1
 
     table.insert(objects, {
+        index = counters.objects,
         path = path,
         className = className,
-        text = tostring(text or "")
+        text = safeString(text),
+        keywordMatch = matched == true
     })
 end
 
-local function addValue(path, className, value)
-    if #values >= 20 then
+local function addValue(path, className, value, matched)
+    if counters.values >= MAX_VALUES then
         return
     end
+
+    if shouldIgnorePath(path) then
+        return
+    end
+
+    counters.values += 1
 
     table.insert(values, {
+        index = counters.values,
         path = path,
         className = className,
-        value = tostring(value)
+        value = safeString(value),
+        keywordMatch = matched == true
     })
 end
 
-local function addAttribute(path, name, value)
-    if #attributes >= 20 then
+local function addAttribute(path, name, value, matched)
+    if counters.attributes >= MAX_ATTRIBUTES then
         return
     end
+
+    if shouldIgnorePath(path) then
+        return
+    end
+
+    counters.attributes += 1
 
     table.insert(attributes, {
+        index = counters.attributes,
         path = path,
         name = name,
-        value = tostring(value)
+        value = safeString(value),
+        keywordMatch = matched == true
     })
 end
 
-local function addSnapshot(label, path, text)
-    if #snapshots >= MAX_SNAPSHOTS then
+local function addSnapshot(label, path, className, text)
+    if counters.snapshots >= MAX_SNAPSHOTS then
         return
     end
 
+    if shouldIgnorePath(path) then
+        return
+    end
+
+    counters.snapshots += 1
+
     table.insert(snapshots, {
-        index = #snapshots + 1,
+        index = counters.snapshots,
         timestamp = os.time(),
+        elapsed = os.clock(),
         label = label,
         path = path,
-        text = tostring(text or "")
+        className = className,
+        text = safeString(text)
     })
 end
 
--- =========================================
--- FIND MAIN SERVER LUCK
--- =========================================
+local function addChange(label, path, className, previous, current, snapshotIndex)
+    if counters.changes >= MAX_CHANGES then
+        return
+    end
+
+    if shouldIgnorePath(path) then
+        return
+    end
+
+    counters.changes += 1
+
+    table.insert(changes, {
+        index = counters.changes,
+        timestamp = os.time(),
+        snapshot = snapshotIndex,
+        label = label,
+        path = path,
+        className = className,
+        previous = safeString(previous),
+        current = safeString(current)
+    })
+end
+
+-- =========================================================
+-- FIND KNOWN SERVER LUCK ROOTS
+-- =========================================================
 
 local mainLuck = nil
-
-pcall(function()
-
-    mainLuck = pg
-        :WaitForChild("Exclusive Store")
-        .Main.Content.Frame.Items.SERVER_LUCK["Server Luck"]
-
-end)
-
--- =========================================
--- FIND ALT SERVER LUCK
--- =========================================
-
 local altLuck = nil
 
 pcall(function()
-
-    altLuck = pg
-        :WaitForChild("!!! Server Luck")
-        .Frame["Server Luck"]
-
+    mainLuck =
+        pg
+        :WaitForChild("Exclusive Store")
+        .Main
+        .Content
+        .Frame
+        .Items
+        .SERVER_LUCK
+        ["Server Luck"]
 end)
 
--- =========================================
--- INITIAL DIAGNOSTIC
--- =========================================
+if not mainLuck then
+    addError(
+        "MAIN_SERVER_LUCK",
+        "Main Server Luck path not found"
+    )
+end
 
-if mainLuck then
+pcall(function()
+    altLuck =
+        pg
+        :WaitForChild("!!! Server Luck")
+        .Frame
+        ["Server Luck"]
+end)
 
-    pcall(function()
+if not altLuck then
+    addError(
+        "ALT_SERVER_LUCK",
+        "Alt Server Luck path not found"
+    )
+end
 
-        local timer = mainLuck.Inside.Toggles.Timer
-        local base = mainLuck.Content.Visual.BaseCounter
-        local display = mainLuck.GameLuckDisplayFrame
+print("[KIMS] FULL LUCK DIAGNOSTIC START")
+print("[KIMS] MAIN:", mainLuck ~= nil)
+print("[KIMS] ALT:", altLuck ~= nil)
 
-        -- TIMER INITIAL
-        addObject(
-            timer:GetFullName(),
-            timer.ClassName,
-            timer.Text
+-- =========================================================
+-- GENERIC INSTANCE SCANNER
+-- =========================================================
+
+local function scanInstance(root, rootLabel)
+
+    if not root then
+        return
+    end
+
+    local ok, descendants = pcall(function()
+        return root:GetDescendants()
+    end)
+
+    if not ok then
+        addError(
+            "GET_DESCENDANTS",
+            rootLabel .. ": " .. safeString(descendants)
         )
+        return
+    end
 
-        -- BASE COUNTER
-        addObject(
-            base:GetFullName(),
-            base.ClassName,
-            base.Text
-        )
+    -- Include root itself.
+    local all = {root}
 
-        -- MULTIPLIER
-        local multiplier =
-            display:GetAttribute("LuckMultiplier")
+    for _, instance in ipairs(descendants) do
+        table.insert(all, instance)
+    end
 
-        if multiplier ~= nil then
+    for _, instance in ipairs(all) do
 
-            addAttribute(
-                display:GetFullName(),
-                "LuckMultiplier",
-                multiplier
-            )
+        local path = ""
+        local className = ""
 
-            addValue(
-                display:GetFullName() ..
-                    " [LuckMultiplier]",
-                "Attribute",
-                multiplier
-            )
+        pcall(function()
+            path = instance:GetFullName()
+            className = instance.ClassName
+        end)
+
+        if not shouldIgnorePath(path) then
+
+            -- =============================================
+            -- TEXT OBJECTS
+            -- =============================================
+
+            if
+                className == "TextLabel"
+                or className == "TextButton"
+                or className == "TextBox"
+            then
+
+                local text = ""
+
+                pcall(function()
+                    text = instance.Text
+                end)
+
+                local matched =
+                    keywordMatch(path)
+                    or keywordMatch(text)
+
+                -- Store keyword-relevant objects,
+                -- plus the known Server Luck objects.
+                if matched then
+                    addObject(
+                        path,
+                        className,
+                        text,
+                        true
+                    )
+                end
+
+            end
+
+            -- =============================================
+            -- VALUEBASE
+            -- =============================================
+
+            local isValueBase =
+                className == "StringValue"
+                or className == "IntValue"
+                or className == "NumberValue"
+                or className == "BoolValue"
+                or className == "ObjectValue"
+                or className == "Vector3Value"
+                or className == "CFrameValue"
+                or className == "Color3Value"
+                or className == "BrickColorValue"
+
+            if isValueBase then
+
+                local value = nil
+
+                pcall(function()
+                    value = instance.Value
+                end)
+
+                local matched =
+                    keywordMatch(path)
+                    or keywordMatch(safeString(value))
+
+                if matched then
+                    addValue(
+                        path,
+                        className,
+                        value,
+                        true
+                    )
+                end
+
+            end
+
+            -- =============================================
+            -- ATTRIBUTES
+            -- =============================================
+
+            local attributeData = {}
+
+            pcall(function()
+                attributeData =
+                    instance:GetAttributes()
+            end)
+
+            for name, value in pairs(attributeData) do
+
+                local matched =
+                    keywordMatch(path)
+                    or keywordMatch(name)
+                    or keywordMatch(safeString(value))
+
+                if matched then
+
+                    addAttribute(
+                        path,
+                        name,
+                        value,
+                        true
+                    )
+
+                end
+
+            end
 
         end
 
-    end)
-
+    end
 end
 
--- =========================================
--- ALT INITIAL
--- =========================================
+-- =========================================================
+-- FULL INITIAL SCAN
+-- =========================================================
+
+print("[KIMS] SCANNING MAIN TREE")
+
+if mainLuck then
+    scanInstance(
+        mainLuck,
+        "MAIN_SERVER_LUCK"
+    )
+end
+
+print("[KIMS] SCANNING ALT TREE")
 
 if altLuck then
-
-    pcall(function()
-
-        local timer =
-            altLuck.Inside.Toggles.Timer
-
-        addObject(
-            timer:GetFullName(),
-            timer.ClassName,
-            timer.Text
-        )
-
-    end)
-
+    scanInstance(
+        altLuck,
+        "ALT_SERVER_LUCK"
+    )
 end
 
--- =========================================
--- TIMER SNAPSHOT
--- =========================================
+-- =========================================================
+-- EXPLICIT KNOWN OBJECT CHECKS
+-- =========================================================
 
-for i = 1, MAX_SNAPSHOTS do
+local function checkKnownObjects()
 
+    -- =============================================
     -- MAIN TIMER
+    -- =============================================
+
     if mainLuck then
 
         pcall(function()
 
             local timer =
-                mainLuck.Inside.Toggles.Timer
+                mainLuck
+                .Inside
+                .Toggles
+                .Timer
 
-            addSnapshot(
-                "MAIN_TIMER",
+            local text = timer.Text
+
+            addObject(
                 timer:GetFullName(),
-                timer.Text
+                timer.ClassName,
+                text,
+                true
             )
 
         end)
 
     end
 
+    -- =============================================
+    -- BASE COUNTER
+    -- =============================================
+
+    if mainLuck then
+
+        pcall(function()
+
+            local base =
+                mainLuck
+                .Content
+                .Visual
+                .BaseCounter
+
+            local text = base.Text
+
+            addObject(
+                base:GetFullName(),
+                base.ClassName,
+                text,
+                true
+            )
+
+        end)
+
+    end
+
+    -- =============================================
+    -- GAME LUCK DISPLAY
+    -- =============================================
+
+    if mainLuck then
+
+        pcall(function()
+
+            local display =
+                mainLuck
+                .GameLuckDisplayFrame
+
+            local path =
+                display:GetFullName()
+
+            local attrs =
+                display:GetAttributes()
+
+            for name, value in pairs(attrs) do
+
+                if
+                    string.lower(name)
+                    == "luckmultiplier"
+                then
+
+                    addAttribute(
+                        path,
+                        name,
+                        value,
+                        true
+                    )
+
+                    addValue(
+                        path ..
+                        " [LuckMultiplier]",
+                        "Attribute",
+                        value,
+                        true
+                    )
+
+                end
+
+            end
+
+        end)
+
+    end
+
+    -- =============================================
     -- ALT TIMER
+    -- =============================================
+
     if altLuck then
 
         pcall(function()
 
             local timer =
-                altLuck.Inside.Toggles.Timer
+                altLuck
+                .Inside
+                .Toggles
+                .Timer
 
-            addSnapshot(
-                "ALT_TIMER",
+            addObject(
                 timer:GetFullName(),
-                timer.Text
+                timer.ClassName,
+                timer.Text,
+                true
             )
 
         end)
 
     end
+end
 
-    if i < MAX_SNAPSHOTS then
-        task.wait(INTERVAL)
+checkKnownObjects()
+
+-- =========================================================
+-- SNAPSHOT MAP
+-- =========================================================
+
+local previousValues = {}
+
+local function snapshotTextObjects(root, label)
+
+    if not root then
+        return
+    end
+
+    local ok, descendants =
+        pcall(function()
+            return root:GetDescendants()
+        end)
+
+    if not ok then
+        return
+    end
+
+    for _, instance in ipairs(descendants) do
+
+        local className = ""
+
+        pcall(function()
+            className = instance.ClassName
+        end)
+
+        if
+            className == "TextLabel"
+            or className == "TextButton"
+            or className == "TextBox"
+        then
+
+            local path = ""
+
+            pcall(function()
+                path = instance:GetFullName()
+            end)
+
+            if not shouldIgnorePath(path) then
+
+                local text = ""
+
+                pcall(function()
+                    text = instance.Text
+                end)
+
+                local key =
+                    label .. "|" .. path
+
+                local old =
+                    previousValues[key]
+
+                addSnapshot(
+                    label,
+                    path,
+                    className,
+                    text
+                )
+
+                if old ~= nil and old ~= text then
+
+                    addChange(
+                        label,
+                        path,
+                        className,
+                        old,
+                        text,
+                        counters.snapshots
+                    )
+
+                end
+
+                previousValues[key] = text
+
+            end
+
+        end
+
+    end
+end
+
+-- =========================================================
+-- SNAPSHOT VALUEBASE
+-- =========================================================
+
+local function snapshotValues(root, label)
+
+    if not root then
+        return
+    end
+
+    local ok, descendants =
+        pcall(function()
+            return root:GetDescendants()
+        end)
+
+    if not ok then
+        return
+    end
+
+    for _, instance in ipairs(descendants) do
+
+        local className = ""
+
+        pcall(function()
+            className = instance.ClassName
+        end)
+
+        local isValueBase =
+            className == "StringValue"
+            or className == "IntValue"
+            or className == "NumberValue"
+            or className == "BoolValue"
+
+        if isValueBase then
+
+            local path = ""
+
+            pcall(function()
+                path = instance:GetFullName()
+            end)
+
+            if not shouldIgnorePath(path) then
+
+                local value = nil
+
+                pcall(function()
+                    value = instance.Value
+                end)
+
+                local current =
+                    safeString(value)
+
+                local key =
+                    label .. "|VALUE|" .. path
+
+                local old =
+                    previousValues[key]
+
+                if old ~= nil and old ~= current then
+
+                    addChange(
+                        label .. "_VALUE",
+                        path,
+                        className,
+                        old,
+                        current,
+                        counters.snapshots
+                    )
+
+                end
+
+                previousValues[key] = current
+
+            end
+
+        end
+
+    end
+end
+
+-- =========================================================
+-- SNAPSHOT ATTRIBUTES
+-- =========================================================
+
+local function snapshotAttributes(root, label)
+
+    if not root then
+        return
+    end
+
+    local ok, descendants =
+        pcall(function()
+            return root:GetDescendants()
+        end)
+
+    if not ok then
+        return
+    end
+
+    for _, instance in ipairs(descendants) do
+
+        local path = ""
+
+        pcall(function()
+            path = instance:GetFullName()
+        end)
+
+        if not shouldIgnorePath(path) then
+
+            local attrs = {}
+
+            pcall(function()
+                attrs = instance:GetAttributes()
+            end)
+
+            for name, value in pairs(attrs) do
+
+                local current =
+                    safeString(value)
+
+                local key =
+                    label ..
+                    "|ATTR|" ..
+                    path ..
+                    "|" ..
+                    name
+
+                local old =
+                    previousValues[key]
+
+                if old ~= nil and old ~= current then
+
+                    addChange(
+                        label .. "_ATTRIBUTE",
+                        path .. " [" .. name .. "]",
+                        "Attribute",
+                        old,
+                        current,
+                        counters.snapshots
+                    )
+
+                end
+
+                previousValues[key] = current
+
+            end
+
+        end
+
+    end
+end
+
+-- =========================================================
+-- SNAPSHOT LOOP
+-- =========================================================
+
+print("[KIMS] STARTING DYNAMIC SNAPSHOTS")
+
+for i = 1, SNAPSHOT_COUNT do
+
+    print(
+        "[KIMS] SNAPSHOT",
+        i,
+        "/",
+        SNAPSHOT_COUNT
+    )
+
+    if mainLuck then
+
+        snapshotTextObjects(
+            mainLuck,
+            "MAIN"
+        )
+
+        snapshotValues(
+            mainLuck,
+            "MAIN"
+        )
+
+        snapshotAttributes(
+            mainLuck,
+            "MAIN"
+        )
+
+    end
+
+    if altLuck then
+
+        snapshotTextObjects(
+            altLuck,
+            "ALT"
+        )
+
+        snapshotValues(
+            altLuck,
+            "ALT"
+        )
+
+        snapshotAttributes(
+            altLuck,
+            "ALT"
+        )
+
+    end
+
+    checkKnownObjects()
+
+    if i < SNAPSHOT_COUNT then
+        task.wait(SNAPSHOT_INTERVAL)
     end
 
 end
 
--- =========================================
--- SECOND MULTIPLIER CHECK
--- =========================================
+-- =========================================================
+-- FINAL KNOWN CHECK
+-- =========================================================
 
-if mainLuck then
+checkKnownObjects()
 
-    pcall(function()
+-- =========================================================
+-- BUILD SUMMARY
+-- =========================================================
 
-        local display =
-            mainLuck.GameLuckDisplayFrame
+local summary = {
 
-        local multiplier =
-            display:GetAttribute("LuckMultiplier")
+    snapshotCount = SNAPSHOT_COUNT,
 
-        if multiplier ~= nil then
+    snapshotInterval = SNAPSHOT_INTERVAL,
 
-            addAttribute(
-                display:GetFullName(),
-                "LuckMultiplier_FINAL",
-                multiplier
-            )
+    mainFound = mainLuck ~= nil,
 
-        end
+    altFound = altLuck ~= nil,
 
-    end)
+    objectCount = #objects,
 
-end
+    valueCount = #values,
 
--- =========================================
--- PAYLOAD
--- =========================================
+    attributeCount = #attributes,
 
-local payload = {
+    snapshotRecordCount = #snapshots,
 
-    version = "LUCK-TIMER-DIAGNOSTIC-V3",
+    changeCount = #changes,
 
-    userId = p.UserId,
+    errorCount = #errors,
 
-    username = p.Name,
+    nextLuckCounterIgnored = true,
 
-    clientTimestamp = os.time(),
-
-    snapshots = snapshots,
-
-    attributes = attributes,
-
-    objects = objects,
-
-    values = values,
-
-    summary = {
-
-        maxSnapshots = MAX_SNAPSHOTS,
-
-        interval = INTERVAL,
-
-        snapshotCount = #snapshots,
-
-        mainFound = mainLuck ~= nil,
-
-        altFound = altLuck ~= nil,
-
-        nextLuckCounterIgnored = true
-
-    },
-
-    ping = true,
+    scannerVersion =
+        "KIMS-FULL-LUCK-DIAGNOSTIC-V1"
 
 }
 
--- =========================================
--- UPLOAD
--- =========================================
+-- =========================================================
+-- PAYLOAD
+-- =========================================================
 
-local body
+local payload = {
 
-local encodeOk, encodeError = pcall(function()
+    version =
+        "KIMS-FULL-LUCK-DIAGNOSTIC-V1",
 
-    body = HttpService:JSONEncode(payload)
+    userId =
+        p.UserId,
 
-end)
+    username =
+        p.Name,
+
+    clientTimestamp =
+        os.time(),
+
+    summary =
+        summary,
+
+    objects =
+        objects,
+
+    values =
+        values,
+
+    attributes =
+        attributes,
+
+    snapshots =
+        snapshots,
+
+    changes =
+        changes,
+
+    errors =
+        errors,
+
+    ping = true
+
+}
+
+-- =========================================================
+-- JSON ENCODE
+-- =========================================================
+
+local body = nil
+
+local encodeOk, encodeError =
+    pcall(function()
+
+        body =
+            HttpService:JSONEncode(
+                payload
+            )
+
+    end)
 
 if not encodeOk then
 
     warn(
         "[KIMS] JSON ERROR:",
-        tostring(encodeError)
+        safeString(encodeError)
     )
 
     return
-
 end
 
-local ok, response = pcall(function()
+print(
+    "[KIMS] JSON SIZE:",
+    #body
+)
 
-    return HttpService:RequestAsync({
+-- =========================================================
+-- UPLOAD
+-- =========================================================
 
-        Url =
-            "https://kims.asia/statakun/api/debug.php",
+local ok, response =
+    pcall(function()
 
-        Method = "POST",
+        return HttpService:RequestAsync({
 
-        Headers = {
+            Url =
+                API_URL,
 
-            ["Content-Type"] =
-                "application/json",
+            Method =
+                "POST",
 
-            ["Authorization"] =
-                "Bearer stat-kims2026"
+            Headers = {
 
-        },
+                ["Content-Type"] =
+                    "application/json",
 
-        Body = body
+                ["Authorization"] =
+                    "Bearer " ..
+                    API_KEY
 
-    })
+            },
 
-end)
+            Body =
+                body
 
--- =========================================
+        })
+
+    end)
+
+-- =========================================================
 -- RESULT
--- =========================================
+-- =========================================================
 
-if ok and response and response.Success then
+if
+    ok
+    and response
+    and response.Success
+then
 
     print(
-        "[KIMS] TIMER DIAGNOSTIC UPLOAD OK"
+        "[KIMS] FULL DIAGNOSTIC UPLOAD OK"
+    )
+
+    print(
+        "[KIMS] OBJECTS:",
+        #objects
+    )
+
+    print(
+        "[KIMS] VALUES:",
+        #values
+    )
+
+    print(
+        "[KIMS] ATTRIBUTES:",
+        #attributes
     )
 
     print(
         "[KIMS] SNAPSHOTS:",
         #snapshots
+    )
+
+    print(
+        "[KIMS] CHANGES:",
+        #changes
     )
 
     print(
@@ -364,7 +1087,7 @@ if ok and response and response.Success then
 else
 
     warn(
-        "[KIMS] TIMER DIAGNOSTIC UPLOAD FAILED"
+        "[KIMS] FULL DIAGNOSTIC UPLOAD FAILED"
     )
 
     if response then
@@ -375,13 +1098,26 @@ else
             response.StatusMessage
         )
 
+        if response.Body then
+
+            warn(
+                "[KIMS] BODY:",
+                response.Body
+            )
+
+        end
+
     else
 
         warn(
             "[KIMS] ERROR:",
-            tostring(response)
+            safeString(response)
         )
 
     end
 
 end
+
+print(
+    "[KIMS] FULL LUCK DIAGNOSTIC FINISHED"
+)
