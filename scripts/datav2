@@ -1,1703 +1,274 @@
---[[
-    KIMS - Zetsu State Hunter
-    Full client/replicated-state diagnostic
-
-    Ground truth:
-        Active Luck     = x8
-        Remaining       = 01h 01m 45s
-        Remaining secs  = 3705
-
-    IMPORTANT:
-        NextLuckCounter is ignored.
-        This scanner does NOT attempt to bypass server security.
-]]
-
+-- LuckScannerV3.lua
+-- Debug/telemetry scanner for an authorized Roblox experience.
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
-local ReplicatedFirst = game:GetService("ReplicatedFirst")
+local HttpService = game:GetService("HttpService")
 
-local p = Players.LocalPlayer
-local pg = p:WaitForChild("PlayerGui")
+local LocalPlayer = Players.LocalPlayer
+local API_URL = "https://kims.asia/statakun/api/debug.php"
+local API_KEY = "stat-kims2026"
+local SCAN_INTERVAL = 2
+local MAX_GUI_OBJECTS = 8000
+local MAX_RS_OBJECTS = 5000
 
--- =========================================================
--- CONFIG
--- =========================================================
+local BLACKLIST = { NextLuckCounter = true }
 
-local SNAPSHOT_COUNT = 20
-local SNAPSHOT_INTERVAL = 1
+local function safe(fn, fallback)
+    local ok, value = pcall(fn)
+    return ok and value or fallback
+end
 
-local KNOWN_MULTIPLIER = 8
-local KNOWN_HOURS = 1
-local KNOWN_MINUTES = 1
-local KNOWN_SECONDS = 45
+local function pathOf(obj)
+    return safe(function() return obj:GetFullName() end, "?")
+end
 
-local KNOWN_TOTAL_SECONDS =
-    (KNOWN_HOURS * 3600)
-    + (KNOWN_MINUTES * 60)
-    + KNOWN_SECONDS
+local function parseMultiplier(value)
+    if value == nil then return nil end
+    local s = tostring(value):lower()
+    local n = s:match("[x×]%s*(%d+)") or s:match("(%d+)%s*[x×]")
+    if not n then n = s:match("luckmultiplier[^%d]*(%d+)") end
+    n = tonumber(n)
+    if n == 2 or n == 4 or n == 6 or n == 8 then return n end
+end
 
-local MAX_CANDIDATES = 2500
-local MAX_RECORDS = 6000
-local MAX_CHANGES = 3000
-local MAX_STATS = 500
-local MAX_ERRORS = 300
+local function parseCountdown(value)
+    if value == nil then return nil end
+    local s = tostring(value)
+    local h,m,sec = s:match("(%d+)%s*[hH]%s*(%d+)%s*[mM]%s*(%d+)%s*[sS]")
+    if h then return tonumber(h)*3600 + tonumber(m)*60 + tonumber(sec), s end
+    h,m,sec = s:match("(%d+):(%d+):(%d+)")
+    if h then return tonumber(h)*3600 + tonumber(m)*60 + tonumber(sec), s end
+    m,sec = s:match("(%d+)%s*[mM]%s*(%d+)%s*[sS]")
+    if m then return tonumber(m)*60 + tonumber(sec), s end
+    sec = s:match("(%d+)%s*[sS]")
+    if sec then return tonumber(sec), s end
+end
 
-local API_URL =
-    "https://kims.asia/statakun/api/debug.php"
+local function addUnique(list, seen, item)
+    local key = item.path.."|"..item.kind.."|"..tostring(item.value or item.text or "")
+    if not seen[key] then
+        seen[key] = true
+        table.insert(list, item)
+    end
+end
 
-local API_KEY =
-    "stat-kims2026"
+local function scanRoot(root, rootName, maxObjects)
+    local out, seen, count = {}, {}, 0
+    local descendants = safe(function() return root:GetDescendants() end, {})
+    for _, obj in ipairs(descendants) do
+        if count >= maxObjects then break end
+        count += 1
 
--- =========================================================
--- STORAGE
--- =========================================================
+        local path = pathOf(obj)
+        local ignored = false
+        for name in pairs(BLACKLIST) do
+            if path:find(name, 1, true) then ignored = true break end
+        end
 
-local candidates = {}
-local candidateObjects = {}
+        if not ignored then
+            local text
+            if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+                text = safe(function() return obj.Text end, "")
+            end
+            if text ~= nil and text ~= "" then
+                addUnique(out, seen, {
+                    root=rootName, path=path, className=obj.ClassName,
+                    kind="text", text=tostring(text)
+                })
+            end
 
-local records = {}
-local changes = {}
-local stats = {}
-local errors = {}
+            local attrs = safe(function() return obj:GetAttributes() end, {})
+            for name,value in pairs(attrs) do
+                addUnique(out, seen, {
+                    root=rootName, path=path, className=obj.ClassName,
+                    kind="attribute", attribute=name, value=tostring(value)
+                })
+            end
 
-local candidateKeys = {}
-local previous = {}
+            if obj:IsA("IntValue") or obj:IsA("NumberValue")
+                or obj:IsA("StringValue") or obj:IsA("BoolValue") then
+                local value = safe(function() return obj.Value end, nil)
+                if value ~= nil then
+                    addUnique(out, seen, {
+                        root=rootName, path=path, className=obj.ClassName,
+                        kind="value", value=tostring(value)
+                    })
+                end
+            end
+        end
+    end
+    return out
+end
 
-local counts = {
-    candidates = 0,
-    records = 0,
-    changes = 0,
-    stats = 0,
-    errors = 0
-}
+local function addKnownLuckPaths(snapshot)
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return end
+    local candidates = {}
 
--- =========================================================
--- BASIC HELPERS
--- =========================================================
-
-local function safeString(value)
-    local ok, result = pcall(function()
-        return tostring(value)
+    safe(function()
+        local luck = pg:WaitForChild("Exclusive Store",1).Main.Content.Frame.Items.SERVER_LUCK["Server Luck"]
+        table.insert(candidates, luck.Inside.Toggles.Timer)
+        table.insert(candidates, luck.Content.Visual.BaseCounter)
+        table.insert(candidates, luck.GameLuckDisplayFrame)
     end)
 
-    if ok then
-        return result
-    end
+    safe(function()
+        local luck = pg:WaitForChild("!!! Server Luck",1).Frame["Server Luck"]
+        table.insert(candidates, luck.Inside.Toggles.Timer)
+    end)
 
-    return ""
+    for _,obj in ipairs(candidates) do
+        if obj then
+            table.insert(snapshot.knownPaths, {
+                path=pathOf(obj),
+                className=obj.ClassName,
+                text=safe(function() return obj.Text end, ""),
+                attributes=safe(function()
+                    local a={}
+                    for k,v in pairs(obj:GetAttributes()) do a[k]=tostring(v) end
+                    return a
+                end,{})
+            })
+        end
+    end
 end
 
-local function lower(value)
-    return string.lower(
-        safeString(value)
-    )
-end
+local function buildSnapshot()
+    local snapshot = {
+        version="LUCK-SCANNER-V3",
+        userId=LocalPlayer.UserId,
+        username=LocalPlayer.Name,
+        timestamp=os.time(),
+        knownPaths={},
+        objects={},
+        candidates={}
+    }
 
-local function addError(stage, message)
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if pg then snapshot.objects.PlayerGui=scanRoot(pg,"PlayerGui",MAX_GUI_OBJECTS) end
+    snapshot.objects.ReplicatedStorage=scanRoot(ReplicatedStorage,"ReplicatedStorage",MAX_RS_OBJECTS)
+    addKnownLuckPaths(snapshot)
 
-    if counts.errors >= MAX_ERRORS then
-        return
+    for rootName,objects in pairs(snapshot.objects) do
+        for _,item in ipairs(objects) do
+            local source=item.text or item.value
+            local multiplier=parseMultiplier(source)
+            local seconds,timerText=parseCountdown(source)
+            if multiplier or seconds then
+                table.insert(snapshot.candidates,{
+                    root=rootName, path=item.path, kind=item.kind,
+                    text=item.text, value=item.value, attribute=item.attribute,
+                    multiplier=multiplier, countdownSeconds=seconds,
+                    countdownText=timerText
+                })
+            end
+        end
     end
 
-    counts.errors += 1
+    for _,item in ipairs(snapshot.knownPaths) do
+        local text=item.text or ""
+        local multiplier=parseMultiplier(text)
+        local seconds,timerText=parseCountdown(text)
 
-    table.insert(errors, {
-        stage = stage,
-        message = safeString(message),
-        timestamp = os.time()
+        for name,value in pairs(item.attributes or {}) do
+            multiplier=multiplier or parseMultiplier(value)
+            local s,t=parseCountdown(value)
+            seconds=seconds or s
+            timerText=timerText or t
+            if multiplier or seconds then
+                table.insert(snapshot.candidates,{
+                    root="KnownPath", path=item.path, kind="known_attribute",
+                    attribute=name, value=value, multiplier=multiplier,
+                    countdownSeconds=seconds, countdownText=timerText
+                })
+            end
+        end
+
+        if multiplier or seconds then
+            table.insert(snapshot.candidates,{
+                root="KnownPath", path=item.path, kind=item.className,
+                text=text, multiplier=multiplier,
+                countdownSeconds=seconds, countdownText=timerText
+            })
+        end
+    end
+    return snapshot
+end
+
+local function post(payload)
+    return safe(function()
+        return HttpService:RequestAsync({
+            Url=API_URL, Method="POST",
+            Headers={
+                ["Content-Type"]="application/json",
+                ["Authorization"]="Bearer "..API_KEY
+            },
+            Body=HttpService:JSONEncode(payload)
+        })
+    end,nil)
+end
+
+local function indexCandidates(snapshot)
+    local result={}
+    for _,c in ipairs(snapshot.candidates) do
+        result[c.path]={
+            multiplier=c.multiplier,
+            countdownSeconds=c.countdownSeconds,
+            countdownText=c.countdownText,
+            text=c.text, value=c.value
+        }
+    end
+    return result
+end
+
+local previous
+do
+    local snapshot=buildSnapshot()
+    previous=indexCandidates(snapshot)
+    post({
+        version=snapshot.version, mode="initial",
+        userId=snapshot.userId, username=snapshot.username,
+        timestamp=snapshot.timestamp, snapshot=snapshot
     })
 end
 
--- =========================================================
--- IGNORE
--- =========================================================
-
-local function isIgnored(path)
-
-    local s = lower(path)
-
-    if string.find(
-        s,
-        "nextluckcounter",
-        1,
-        true
-    ) then
-        return true
-    end
-
-    return false
-end
-
--- =========================================================
--- KEYWORD SYSTEM
--- =========================================================
-
-local keywords = {
-
-    "luck",
-    "boost",
-    "serverluck",
-    "server_luck",
-
-    "timer",
-    "countdown",
-    "counter",
-
-    "remaining",
-    "remain",
-
-    "duration",
-    "durationleft",
-
-    "expire",
-    "expires",
-    "expiry",
-    "expiration",
-
-    "endtime",
-    "end_time",
-    "starttime",
-    "start_time",
-
-    "multiplier",
-
-    "active",
-    "current",
-
-    "seconds",
-    "second",
-
-    "minutes",
-    "minute",
-
-    "hours",
-    "hour",
-
-    "caught",
-    "fish",
-    "coins",
-    "level",
-
-    "location",
-    "rod",
-    "pet",
-    "skin",
-    "enchant",
-
-    "rarest"
-
-}
-
-local function hasKeyword(text)
-
-    local s = lower(text)
-
-    for _, word in ipairs(keywords) do
-
-        if string.find(
-            s,
-            word,
-            1,
-            true
-        ) then
-            return true
-        end
-
-    end
-
-    return false
-end
-
--- =========================================================
--- NUMBER HELPERS
--- =========================================================
-
-local function toNumber(value)
-
-    if typeof(value) == "number" then
-        return value
-    end
-
-    return tonumber(
-        safeString(value)
-    )
-end
-
-local function isNearKnownCountdown(number)
-
-    if not number then
-        return false
-    end
-
-    return math.abs(
-        number - KNOWN_TOTAL_SECONDS
-    ) <= 120
-end
-
-local function isPossibleUnixExpiry(number)
-
-    if not number then
-        return false
-    end
-
-    local now = os.time()
-
-    -- Future Unix timestamps.
-    return
-        number > now
-        and number < now + 7 * 24 * 60 * 60
-end
-
--- =========================================================
--- COUNTDOWN PARSER
--- =========================================================
-
-local function parseCountdown(text)
-
-    text = safeString(text)
-
-    -- 01h 01m 45s
-
-    local h, m, s =
-        string.match(
-            text,
-            "(%d+)%s*[hH]%s*(%d+)%s*[mM]%s*(%d+)%s*[sS]"
-        )
-
-    if h and m and s then
-
-        return
-            tonumber(h) * 3600
-            + tonumber(m) * 60
-            + tonumber(s),
-            "HMS"
-
-    end
-
-    -- 01h 01m
-
-    local h2, m2 =
-        string.match(
-            text,
-            "(%d+)%s*[hH]%s*(%d+)%s*[mM]"
-        )
-
-    if h2 and m2 then
-
-        return
-            tonumber(h2) * 3600
-            + tonumber(m2) * 60,
-            "HM"
-
-    end
-
-    -- 01h
-
-    local h3 =
-        string.match(
-            text,
-            "(%d+)%s*[hH]"
-        )
-
-    if h3 then
-        return tonumber(h3) * 3600, "H"
-    end
-
-    -- 01m 45s
-
-    local m3, s3 =
-        string.match(
-            text,
-            "(%d+)%s*[mM]%s*(%d+)%s*[sS]"
-        )
-
-    if m3 and s3 then
-
-        return
-            tonumber(m3) * 60
-            + tonumber(s3),
-            "MS"
-
-    end
-
-    -- HH:MM:SS
-
-    local hh, mm, ss =
-        string.match(
-            text,
-            "^(%d+):(%d%d):(%d%d)$"
-        )
-
-    if hh and mm and ss then
-
-        return
-            tonumber(hh) * 3600
-            + tonumber(mm) * 60
-            + tonumber(ss),
-            "HHMMSS"
-
-    end
-
-    -- MM:SS
-
-    local min, sec =
-        string.match(
-            text,
-            "^(%d+):(%d%d)$"
-        )
-
-    if min and sec then
-
-        return
-            tonumber(min) * 60
-            + tonumber(sec),
-            "MMSS"
-
-    end
-
-    return nil, nil
-end
-
--- =========================================================
--- CANDIDATE ADDER
--- =========================================================
-
-local function addCandidate(
-    instance,
-    source,
-    property,
-    value,
-    reason
-)
-
-    if counts.candidates >= MAX_CANDIDATES then
-        return
-    end
-
-    local path = ""
-
-    pcall(function()
-        path = instance:GetFullName()
-    end)
-
-    if path == "" then
-        return
-    end
-
-    if isIgnored(path) then
-        return
-    end
-
-    local key =
-        path
-        .. "|"
-        .. property
-
-    if candidateKeys[key] then
-        return
-    end
-
-    candidateKeys[key] = true
-
-    local numeric =
-        toNumber(value)
-
-    local parsed,
-        format =
-        parseCountdown(value)
-
-    local reasonText =
-        reason or "candidate"
-
-    counts.candidates += 1
-
-    candidates[
-        counts.candidates
-    ] = {
-
-        index =
-            counts.candidates,
-
-        path =
-            path,
-
-        className =
-            instance.ClassName,
-
-        source =
-            source,
-
-        property =
-            property,
-
-        initialValue =
-            safeString(value),
-
-        numeric =
-            numeric,
-
-        parsedSeconds =
-            parsed,
-
-        parsedFormat =
-            format,
-
-        distanceFromKnown =
-            parsed
-            and math.abs(
-                parsed
-                - KNOWN_TOTAL_SECONDS
-            )
-            or numeric
-            and math.abs(
-                numeric
-                - KNOWN_TOTAL_SECONDS
-            )
-            or nil,
-
-        unixExpiryCandidate =
-            isPossibleUnixExpiry(
-                numeric
-            ),
-
-        reason =
-            reasonText
-    }
-
-    candidateObjects[
-        counts.candidates
-    ] = instance
-end
-
--- =========================================================
--- TEXT SCAN
--- =========================================================
-
-local function inspectText(
-    instance,
-    rootName
-)
-
-    local text = ""
-
-    local ok = pcall(function()
-        text = instance.Text
-    end)
-
-    if not ok then
-        return
-    end
-
-    local numeric =
-        toNumber(text)
-
-    local parsed =
-        parseCountdown(text)
-
-    local interesting =
-        hasKeyword(
-            instance:GetFullName()
-        )
-        or hasKeyword(text)
-        or parsed ~= nil
-        or isNearKnownCountdown(
-            numeric
-        )
-
-    if interesting then
-
-        addCandidate(
-            instance,
-            "TEXT",
-            "Text",
-            text,
-            parsed
-            and "COUNTDOWN_TEXT"
-            or numeric
-            and "NUMERIC_TEXT"
-            or "KEYWORD_TEXT"
-        )
-
-    end
-end
-
--- =========================================================
--- VALUE SCAN
--- =========================================================
-
-local function inspectValue(
-    instance
-)
-
-    local value = nil
-
-    local ok = pcall(function()
-        value = instance.Value
-    end)
-
-    if not ok then
-        return
-    end
-
-    local numeric =
-        toNumber(value)
-
-    local parsed =
-        parseCountdown(value)
-
-    local interesting =
-        hasKeyword(
-            instance:GetFullName()
-        )
-        or parsed ~= nil
-        or isNearKnownCountdown(
-            numeric
-        )
-        or isPossibleUnixExpiry(
-            numeric
-        )
-
-    if interesting then
-
-        addCandidate(
-            instance,
-            "VALUE",
-            "Value",
-            value,
-            parsed
-            and "COUNTDOWN_VALUE"
-            or isPossibleUnixExpiry(numeric)
-            and "EXPIRY_TIMESTAMP"
-            or numeric
-            and "NUMERIC_VALUE"
-            or "KEYWORD_VALUE"
-        )
-
-    end
-end
-
--- =========================================================
--- ATTRIBUTE SCAN
--- =========================================================
-
-local function inspectAttributes(
-    instance
-)
-
-    local attrs = {}
-
-    local ok = pcall(function()
-        attrs =
-            instance:GetAttributes()
-    end)
-
-    if not ok then
-        return
-    end
-
-    for name, value in pairs(attrs) do
-
-        local lname =
-            lower(name)
-
-        -- We know this is useful,
-        -- but it is not the countdown itself.
-        if lname == "luckmultiplier" then
-
-            if counts.stats < MAX_STATS then
-
-                counts.stats += 1
-
-                table.insert(
-                    stats,
-                    {
-                        type = "LuckMultiplier",
-                        path =
-                            instance:GetFullName(),
-                        name = name,
-                        value =
-                            safeString(value),
-                        timestamp =
-                            os.time()
-                    }
-                )
-
-            end
-
-        else
-
-            local numeric =
-                toNumber(value)
-
-            local parsed =
-                parseCountdown(value)
-
-            local interesting =
-                hasKeyword(
-                    instance:GetFullName()
-                )
-                or hasKeyword(name)
-                or parsed ~= nil
-                or isNearKnownCountdown(
-                    numeric
-                )
-                or isPossibleUnixExpiry(
-                    numeric
-                )
-
-            if interesting then
-
-                addCandidate(
-                    instance,
-                    "ATTRIBUTE",
-                    name,
-                    value,
-                    parsed
-                    and "COUNTDOWN_ATTRIBUTE"
-                    or isPossibleUnixExpiry(numeric)
-                    and "EXPIRY_ATTRIBUTE"
-                    or "KEYWORD_ATTRIBUTE"
-                )
-
-            end
-
-        end
-    end
-end
-
--- =========================================================
--- ROOT SCANNER
--- =========================================================
-
-local function scanRoot(
-    root,
-    rootName
-)
-
-    if not root then
-        return
-    end
-
-    print(
-        "[KIMS] SCANNING:",
-        rootName
-    )
-
-    local ok, descendants =
-        pcall(function()
-            return root:GetDescendants()
-        end)
-
-    if not ok then
-
-        addError(
-            "SCAN_ROOT",
-            rootName
-            .. ": "
-            .. safeString(descendants)
-        )
-
-        return
-    end
-
-    -- Scan root itself.
-
-    pcall(function()
-
-        local class =
-            root.ClassName
-
-        if
-            class == "TextLabel"
-            or class == "TextButton"
-            or class == "TextBox"
-        then
-            inspectText(
-                root,
-                rootName
-            )
-        end
-
-        local valueClasses = {
-
-            StringValue = true,
-            IntValue = true,
-            NumberValue = true,
-            BoolValue = true
-
-        }
-
-        if valueClasses[class] then
-            inspectValue(root)
-        end
-
-        inspectAttributes(root)
-
-    end)
-
-    for _, instance in ipairs(descendants) do
-
-        if counts.candidates >= MAX_CANDIDATES then
-            break
-        end
-
-        pcall(function()
-
-            local class =
-                instance.ClassName
-
-            if
-                class == "TextLabel"
-                or class == "TextButton"
-                or class == "TextBox"
-            then
-
-                inspectText(
-                    instance,
-                    rootName
-                )
-
-            end
-
-            if
-                class == "StringValue"
-                or class == "IntValue"
-                or class == "NumberValue"
-                or class == "BoolValue"
-            then
-
-                inspectValue(
-                    instance
-                )
-
-            end
-
-            inspectAttributes(
-                instance
-            )
-
-        end)
-
-    end
-end
-
--- =========================================================
--- PLAYER STATS
--- =========================================================
-
-local function collectPlayerStats()
-
-    print("[KIMS] COLLECTING PLAYER STATS")
-
-    local containers = {
-
-        p,
-        p:FindFirstChild("leaderstats"),
-        p:FindFirstChild("Data"),
-        p:FindFirstChild("Stats"),
-        p:FindFirstChild("PlayerData"),
-        p:FindFirstChild("Inventory"),
-        p:FindFirstChild("CharacterData")
-
-    }
-
-    local seen = {}
-
-    for _, container in ipairs(containers) do
-
-        if container and not seen[container] then
-
-            seen[container] = true
-
-            pcall(function()
-
-                local descendants =
-                    container:GetDescendants()
-
-                for _, obj in ipairs(
-                    descendants
-                ) do
-
-                    if counts.stats >= MAX_STATS then
-                        return
-                    end
-
-                    local class =
-                        obj.ClassName
-
-                    if
-                        class == "StringValue"
-                        or class == "IntValue"
-                        or class == "NumberValue"
-                        or class == "BoolValue"
-                    then
-
-                        local value = nil
-
-                        pcall(function()
-                            value = obj.Value
-                        end)
-
-                        counts.stats += 1
-
-                        table.insert(
-                            stats,
-                            {
-                                type =
-                                    "PlayerStat",
-
-                                path =
-                                    obj:GetFullName(),
-
-                                name =
-                                    obj.Name,
-
-                                className =
-                                    class,
-
-                                value =
-                                    safeString(value),
-
-                                timestamp =
-                                    os.time()
-                            }
-                        )
-
-                    end
-
+task.spawn(function()
+    while task.wait(SCAN_INTERVAL) do
+        local snapshot=buildSnapshot()
+        local current=indexCandidates(snapshot)
+        local changes={}
+
+        for path,now in pairs(current) do
+            local old=previous[path]
+            if old then
+                local mc=old.multiplier~=now.multiplier
+                    and (old.multiplier~=nil or now.multiplier~=nil)
+                local tc=old.countdownSeconds~=now.countdownSeconds
+                    and (old.countdownSeconds~=nil or now.countdownSeconds~=nil)
+
+                if mc or tc then
+                    table.insert(changes,{
+                        path=path,
+                        multiplierOld=old.multiplier,
+                        multiplierNew=now.multiplier,
+                        countdownOld=old.countdownSeconds,
+                        countdownNew=now.countdownSeconds,
+                        countdownText=now.countdownText,
+                        text=now.text, value=now.value
+                    })
                 end
-
-            end)
-
-        end
-    end
-end
-
--- =========================================================
--- KNOWN SERVER LUCK
--- =========================================================
-
-local mainLuck = nil
-local altLuck = nil
-
-pcall(function()
-
-    mainLuck =
-        pg
-        :WaitForChild("Exclusive Store")
-        .Main
-        .Content
-        .Frame
-        .Items
-        .SERVER_LUCK
-        ["Server Luck"]
-
-end)
-
-pcall(function()
-
-    altLuck =
-        pg
-        :WaitForChild("!!! Server Luck")
-        .Frame
-        ["Server Luck"]
-
-end)
-
-print(
-    "[KIMS] MAIN SERVER LUCK:",
-    mainLuck ~= nil
-)
-
-print(
-    "[KIMS] ALT SERVER LUCK:",
-    altLuck ~= nil
-)
-
--- =========================================================
--- KNOWN MULTIPLIER
--- =========================================================
-
-local initialMultiplier = nil
-
-pcall(function()
-
-    if mainLuck then
-
-        local display =
-            mainLuck
-            .GameLuckDisplayFrame
-
-        initialMultiplier =
-            display:GetAttribute(
-                "LuckMultiplier"
-            )
-
-        if counts.stats < MAX_STATS then
-
-            counts.stats += 1
-
-            table.insert(
-                stats,
-                {
-                    type =
-                        "KnownLuckMultiplier",
-
-                    path =
-                        display:GetFullName(),
-
-                    name =
-                        "LuckMultiplier",
-
-                    value =
-                        safeString(
-                            initialMultiplier
-                        ),
-
-                    timestamp =
-                        os.time()
-                }
-            )
-
-        end
-
-    end
-
-end)
-
--- =========================================================
--- KNOWN TIMER OBJECTS
--- =========================================================
-
-pcall(function()
-
-    if mainLuck then
-
-        local timer =
-            mainLuck
-            .Inside
-            .Toggles
-            .Timer
-
-        addCandidate(
-            timer,
-            "KNOWN_MAIN_TIMER",
-            "Text",
-            timer.Text,
-            "KNOWN_TIMER_PATH"
-        )
-
-    end
-
-end)
-
-pcall(function()
-
-    if mainLuck then
-
-        local base =
-            mainLuck
-            .Content
-            .Visual
-            .BaseCounter
-
-        addCandidate(
-            base,
-            "KNOWN_BASE_COUNTER",
-            "Text",
-            base.Text,
-            "KNOWN_BASE_COUNTER"
-        )
-
-    end
-
-end)
-
-pcall(function()
-
-    if altLuck then
-
-        local timer =
-            altLuck
-            .Inside
-            .Toggles
-            .Timer
-
-        addCandidate(
-            timer,
-            "KNOWN_ALT_TIMER",
-            "Text",
-            timer.Text,
-            "KNOWN_ALT_TIMER"
-        )
-
-    end
-
-end)
-
--- =========================================================
--- INITIAL ROOTS
--- =========================================================
-
-collectPlayerStats()
-
-scanRoot(
-    p,
-    "PLAYER"
-)
-
-scanRoot(
-    pg,
-    "PLAYER_GUI"
-)
-
-scanRoot(
-    ReplicatedStorage,
-    "REPLICATED_STORAGE"
-)
-
-scanRoot(
-    Workspace,
-    "WORKSPACE"
-)
-
-scanRoot(
-    ReplicatedFirst,
-    "REPLICATED_FIRST"
-)
-
-pcall(function()
-
-    if p.Character then
-        scanRoot(
-            p.Character,
-            "CHARACTER"
-        )
-    end
-
-end)
-
-pcall(function()
-
-    local backpack =
-        p:FindFirstChild("Backpack")
-
-    if backpack then
-
-        scanRoot(
-            backpack,
-            "BACKPACK"
-        )
-
-    end
-
-end)
-
--- =========================================================
--- SNAPSHOT READ
--- =========================================================
-
-local function readCandidate(index)
-
-    local obj =
-        candidateObjects[index]
-
-    local candidate =
-        candidates[index]
-
-    if not obj or not candidate then
-        return nil
-    end
-
-    local value = nil
-
-    local ok = pcall(function()
-
-        if candidate.property == "Text" then
-
-            value = obj.Text
-
-        elseif candidate.property == "Value" then
-
-            value = obj.Value
-
-        else
-
-            value =
-                obj:GetAttribute(
-                    candidate.property
-                )
-
-        end
-
-    end)
-
-    if not ok then
-        return nil
-    end
-
-    return value
-end
-
--- =========================================================
--- RECORD
--- =========================================================
-
-local function record(
-    index,
-    second
-)
-
-    if counts.records >= MAX_RECORDS then
-        return
-    end
-
-    local candidate =
-        candidates[index]
-
-    local value =
-        readCandidate(index)
-
-    if value == nil then
-        return
-    end
-
-    local text =
-        safeString(value)
-
-    local numeric =
-        toNumber(value)
-
-    local parsed,
-        format =
-        parseCountdown(text)
-
-    local key =
-        candidate.path
-        .. "|"
-        .. candidate.property
-
-    local old =
-        previous[key]
-
-    local changed =
-        old ~= nil
-        and old ~= text
-
-    local oldParsed = nil
-
-    if old then
-
-        oldParsed =
-            parseCountdown(old)
-
-    end
-
-    local delta = nil
-
-    if
-        type(oldParsed) == "number"
-        and type(parsed) == "number"
-    then
-
-        delta =
-            parsed
-            - oldParsed
-
-    end
-
-    local distance =
-        parsed
-        and math.abs(
-            parsed
-            - KNOWN_TOTAL_SECONDS
-        )
-        or numeric
-        and math.abs(
-            numeric
-            - KNOWN_TOTAL_SECONDS
-        )
-        or nil
-
-    counts.records += 1
-
-    table.insert(
-        records,
-        {
-            index =
-                counts.records,
-
-            second =
-                second,
-
-            timestamp =
-                os.time(),
-
-            path =
-                candidate.path,
-
-            className =
-                candidate.className,
-
-            source =
-                candidate.source,
-
-            property =
-                candidate.property,
-
-            value =
-                text,
-
-            numeric =
-                numeric,
-
-            parsedSeconds =
-                parsed,
-
-            parsedFormat =
-                format,
-
-            distanceFromKnown =
-                distance,
-
-            changed =
-                changed,
-
-            countdownDelta =
-                delta
-        }
-    )
-
-    -- =====================================================
-    -- CHANGE RECORD
-    -- =====================================================
-
-    if
-        changed
-        and counts.changes < MAX_CHANGES
-    then
-
-        counts.changes += 1
-
-        table.insert(
-            changes,
-            {
-                index =
-                    counts.changes,
-
-                second =
-                    second,
-
-                timestamp =
-                    os.time(),
-
-                path =
-                    candidate.path,
-
-                className =
-                    candidate.className,
-
-                source =
-                    candidate.source,
-
-                property =
-                    candidate.property,
-
-                previous =
-                    old,
-
-                current =
-                    text,
-
-                parsedSeconds =
-                    parsed,
-
-                countdownDelta =
-                    delta,
-
-                distanceFromKnown =
-                    distance
-            }
-        )
-
-    end
-
-    previous[key] =
-        text
-end
-
--- =========================================================
--- SNAPSHOT LOOP
--- =========================================================
-
-print(
-    "[KIMS] TOTAL CANDIDATES:",
-    #candidates
-)
-
-print(
-    "[KIMS] STARTING",
-    SNAPSHOT_COUNT,
-    "SECOND RUNTIME WATCH"
-)
-
-for second = 0, SNAPSHOT_COUNT do
-
-    print(
-        "[KIMS] WATCH SECOND:",
-        second
-    )
-
-    for index = 1, #candidates do
-
-        pcall(function()
-
-            record(
-                index,
-                second
-            )
-
-        end)
-
-    end
-
-    -- Re-check the known multiplier.
-
-    pcall(function()
-
-        if mainLuck then
-
-            local display =
-                mainLuck
-                .GameLuckDisplayFrame
-
-            local multiplier =
-                display:GetAttribute(
-                    "LuckMultiplier"
-                )
-
-            if counts.stats < MAX_STATS then
-
-                counts.stats += 1
-
-                table.insert(
-                    stats,
-                    {
-                        type =
-                            "MultiplierSnapshot",
-
-                        path =
-                            display:GetFullName(),
-
-                        name =
-                            "LuckMultiplier",
-
-                        value =
-                            safeString(
-                                multiplier
-                            ),
-
-                        second =
-                            second,
-
-                        timestamp =
-                            os.time()
-                    }
-                )
-
             end
-
         end
 
-    end)
-
-    if second < SNAPSHOT_COUNT then
-        task.wait(
-            SNAPSHOT_INTERVAL
-        )
+        if #changes>0 then
+            post({
+                version="LUCK-SCANNER-V3", mode="runtime_change",
+                userId=LocalPlayer.UserId, username=LocalPlayer.Name,
+                timestamp=os.time(), changes=changes,
+                candidates=snapshot.candidates,
+                knownPaths=snapshot.knownPaths
+            })
+        end
+        previous=current
     end
-
-end
-
--- =========================================================
--- FINAL MULTIPLIER
--- =========================================================
-
-local finalMultiplier = nil
-
-pcall(function()
-
-    if mainLuck then
-
-        finalMultiplier =
-            mainLuck
-            .GameLuckDisplayFrame
-            :GetAttribute(
-                "LuckMultiplier"
-            )
-
-    end
-
 end)
-
--- =========================================================
--- SUMMARY
--- =========================================================
-
-local summary = {
-
-    mainServerLuckFound =
-        mainLuck ~= nil,
-
-    altServerLuckFound =
-        altLuck ~= nil,
-
-    initialMultiplier =
-        safeString(
-            initialMultiplier
-        ),
-
-    finalMultiplier =
-        safeString(
-            finalMultiplier
-        ),
-
-    knownRemaining =
-        "01h 01m 45s",
-
-    knownRemainingSeconds =
-        KNOWN_TOTAL_SECONDS,
-
-    candidates =
-        #candidates,
-
-    records =
-        #records,
-
-    changes =
-        #changes,
-
-    stats =
-        #stats,
-
-    errors =
-        #errors,
-
-    snapshotCount =
-        SNAPSHOT_COUNT,
-
-    snapshotInterval =
-        SNAPSHOT_INTERVAL,
-
-    nextLuckCounterIgnored =
-        true,
-
-    scanner =
-        "KIMS-ZETSU-STATE-HUNTER-V1"
-}
-
--- =========================================================
--- PAYLOAD
--- =========================================================
-
-local payload = {
-
-    version =
-        "KIMS-ZETSU-STATE-HUNTER-V1",
-
-    userId =
-        p.UserId,
-
-    username =
-        p.Name,
-
-    clientTimestamp =
-        os.time(),
-
-    knownState = {
-
-        multiplier =
-            KNOWN_MULTIPLIER,
-
-        remaining =
-            "01h 01m 45s",
-
-        remainingSeconds =
-            KNOWN_TOTAL_SECONDS
-
-    },
-
-    summary =
-        summary,
-
-    stats =
-        stats,
-
-    candidates =
-        candidates,
-
-    records =
-        records,
-
-    changes =
-        changes,
-
-    errors =
-        errors,
-
-    ping = true
-}
-
--- =========================================================
--- ENCODE
--- =========================================================
-
-local body = nil
-
-local encodeOk,
-    encodeError =
-    pcall(function()
-
-        body =
-            HttpService:JSONEncode(
-                payload
-            )
-
-    end)
-
-if not encodeOk then
-
-    warn(
-        "[KIMS] JSON ERROR:",
-        safeString(
-            encodeError
-        )
-    )
-
-    return
-end
-
-print(
-    "[KIMS] JSON SIZE:",
-    #body
-)
-
--- =========================================================
--- UPLOAD
--- =========================================================
-
-local ok, response =
-    pcall(function()
-
-        return HttpService:RequestAsync({
-
-            Url =
-                API_URL,
-
-            Method =
-                "POST",
-
-            Headers = {
-
-                ["Content-Type"] =
-                    "application/json",
-
-                ["Authorization"] =
-                    "Bearer "
-                    .. API_KEY
-
-            },
-
-            Body =
-                body
-
-        })
-
-    end)
-
--- =========================================================
--- RESULT
--- =========================================================
-
-if
-    ok
-    and response
-    and response.Success
-then
-
-    print(
-        "[KIMS] ZETSU STATE HUNTER UPLOAD OK"
-    )
-
-    print(
-        "[KIMS] CANDIDATES:",
-        #candidates
-    )
-
-    print(
-        "[KIMS] RECORDS:",
-        #records
-    )
-
-    print(
-        "[KIMS] CHANGES:",
-        #changes
-    )
-
-    print(
-        "[KIMS] STATS:",
-        #stats
-    )
-
-    print(
-        "[KIMS] INITIAL MULTIPLIER:",
-        safeString(
-            initialMultiplier
-        )
-    )
-
-    print(
-        "[KIMS] FINAL MULTIPLIER:",
-        safeString(
-            finalMultiplier
-        )
-
-else
-
-    warn(
-        "[KIMS] ZETSU STATE HUNTER UPLOAD FAILED"
-    )
-
-    if response then
-
-        warn(
-            "[KIMS] HTTP:",
-            response.StatusCode,
-            response.StatusMessage
-        )
-
-        if response.Body then
-
-            warn(
-                "[KIMS] BODY:",
-                response.Body
-            )
-
-        end
-
-    else
-
-        warn(
-            "[KIMS] ERROR:",
-            safeString(response)
-        )
-
-    end
-
-end
-
-print(
-    "[KIMS] ZETSU STATE HUNTER FINISHED"
-)
