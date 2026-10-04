@@ -1,29 +1,22 @@
 --[[
-    KIMS - Luck Countdown Hunter v1
+    KIMS - Zetsu State Hunter
+    Full client/replicated-state diagnostic
 
-    PURPOSE:
-    Find the real Server Luck countdown source.
-
-    Known ground truth:
-        Active multiplier = x8
-        Remaining time    = 01h 01m 45s
+    Ground truth:
+        Active Luck     = x8
+        Remaining       = 01h 01m 45s
+        Remaining secs  = 3705
 
     IMPORTANT:
         NextLuckCounter is ignored.
-
-    Strategy:
-        1. Find known Server Luck roots.
-        2. Scan descendants once.
-        3. Build candidate list.
-        4. Read candidates every 1 second.
-        5. Detect values that change.
-        6. Detect countdown-like patterns.
-        7. Detect values around known remaining time.
-        8. Upload diagnostic data to the known-working API.
+        This scanner does NOT attempt to bypass server security.
 ]]
 
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
 
 local p = Players.LocalPlayer
 local pg = p:WaitForChild("PlayerGui")
@@ -32,9 +25,10 @@ local pg = p:WaitForChild("PlayerGui")
 -- CONFIG
 -- =========================================================
 
-local SNAPSHOT_SECONDS = 20
-local INTERVAL = 1
+local SNAPSHOT_COUNT = 20
+local SNAPSHOT_INTERVAL = 1
 
+local KNOWN_MULTIPLIER = 8
 local KNOWN_HOURS = 1
 local KNOWN_MINUTES = 1
 local KNOWN_SECONDS = 45
@@ -44,9 +38,10 @@ local KNOWN_TOTAL_SECONDS =
     + (KNOWN_MINUTES * 60)
     + KNOWN_SECONDS
 
-local MAX_CANDIDATES = 2000
-local MAX_RECORDS = 5000
+local MAX_CANDIDATES = 2500
+local MAX_RECORDS = 6000
 local MAX_CHANGES = 3000
+local MAX_STATS = 500
 local MAX_ERRORS = 300
 
 local API_URL =
@@ -60,27 +55,31 @@ local API_KEY =
 -- =========================================================
 
 local candidates = {}
+local candidateObjects = {}
+
 local records = {}
 local changes = {}
+local stats = {}
 local errors = {}
 
-local candidateMap = {}
+local candidateKeys = {}
 local previous = {}
 
 local counts = {
     candidates = 0,
     records = 0,
     changes = 0,
+    stats = 0,
     errors = 0
 }
 
 -- =========================================================
--- HELPERS
+-- BASIC HELPERS
 -- =========================================================
 
-local function str(v)
+local function safeString(value)
     local ok, result = pcall(function()
-        return tostring(v)
+        return tostring(value)
     end)
 
     if ok then
@@ -90,19 +89,10 @@ local function str(v)
     return ""
 end
 
-local function lower(v)
-    return string.lower(str(v))
-end
-
-local function ignored(path)
-    local s = lower(path)
-
-    return string.find(
-        s,
-        "nextluckcounter",
-        1,
-        true
-    ) ~= nil
+local function lower(value)
+    return string.lower(
+        safeString(value)
+    )
 end
 
 local function addError(stage, message)
@@ -115,9 +105,149 @@ local function addError(stage, message)
 
     table.insert(errors, {
         stage = stage,
-        message = str(message),
+        message = safeString(message),
         timestamp = os.time()
     })
+end
+
+-- =========================================================
+-- IGNORE
+-- =========================================================
+
+local function isIgnored(path)
+
+    local s = lower(path)
+
+    if string.find(
+        s,
+        "nextluckcounter",
+        1,
+        true
+    ) then
+        return true
+    end
+
+    return false
+end
+
+-- =========================================================
+-- KEYWORD SYSTEM
+-- =========================================================
+
+local keywords = {
+
+    "luck",
+    "boost",
+    "serverluck",
+    "server_luck",
+
+    "timer",
+    "countdown",
+    "counter",
+
+    "remaining",
+    "remain",
+
+    "duration",
+    "durationleft",
+
+    "expire",
+    "expires",
+    "expiry",
+    "expiration",
+
+    "endtime",
+    "end_time",
+    "starttime",
+    "start_time",
+
+    "multiplier",
+
+    "active",
+    "current",
+
+    "seconds",
+    "second",
+
+    "minutes",
+    "minute",
+
+    "hours",
+    "hour",
+
+    "caught",
+    "fish",
+    "coins",
+    "level",
+
+    "location",
+    "rod",
+    "pet",
+    "skin",
+    "enchant",
+
+    "rarest"
+
+}
+
+local function hasKeyword(text)
+
+    local s = lower(text)
+
+    for _, word in ipairs(keywords) do
+
+        if string.find(
+            s,
+            word,
+            1,
+            true
+        ) then
+            return true
+        end
+
+    end
+
+    return false
+end
+
+-- =========================================================
+-- NUMBER HELPERS
+-- =========================================================
+
+local function toNumber(value)
+
+    if typeof(value) == "number" then
+        return value
+    end
+
+    return tonumber(
+        safeString(value)
+    )
+end
+
+local function isNearKnownCountdown(number)
+
+    if not number then
+        return false
+    end
+
+    return math.abs(
+        number - KNOWN_TOTAL_SECONDS
+    ) <= 120
+end
+
+local function isPossibleUnixExpiry(number)
+
+    if not number then
+        return false
+    end
+
+    local now = os.time()
+
+    -- Future Unix timestamps.
+    return
+        number > now
+        and number < now + 7 * 24 * 60 * 60
 end
 
 -- =========================================================
@@ -126,11 +256,9 @@ end
 
 local function parseCountdown(text)
 
-    text = str(text)
+    text = safeString(text)
 
-    -- =============================================
     -- 01h 01m 45s
-    -- =============================================
 
     local h, m, s =
         string.match(
@@ -140,18 +268,15 @@ local function parseCountdown(text)
 
     if h and m and s then
 
-        local total =
+        return
             tonumber(h) * 3600
             + tonumber(m) * 60
-            + tonumber(s)
-
-        return total, "HMS"
+            + tonumber(s),
+            "HMS"
 
     end
 
-    -- =============================================
     -- 01h 01m
-    -- =============================================
 
     local h2, m2 =
         string.match(
@@ -161,17 +286,14 @@ local function parseCountdown(text)
 
     if h2 and m2 then
 
-        local total =
+        return
             tonumber(h2) * 3600
-            + tonumber(m2) * 60
-
-        return total, "HM"
+            + tonumber(m2) * 60,
+            "HM"
 
     end
 
-    -- =============================================
     -- 01h
-    -- =============================================
 
     local h3 =
         string.match(
@@ -180,14 +302,10 @@ local function parseCountdown(text)
         )
 
     if h3 then
-
         return tonumber(h3) * 3600, "H"
-
     end
 
-    -- =============================================
     -- 01m 45s
-    -- =============================================
 
     local m3, s3 =
         string.match(
@@ -204,42 +322,38 @@ local function parseCountdown(text)
 
     end
 
-    -- =============================================
-    -- MM:SS
-    -- =============================================
-
-    local mm, ss =
-        string.match(
-            text,
-            "^(%d+):(%d%d)$"
-        )
-
-    if mm and ss then
-
-        return
-            tonumber(mm) * 60
-            + tonumber(ss),
-            "MMSS"
-
-    end
-
-    -- =============================================
     -- HH:MM:SS
-    -- =============================================
 
-    local hh, min, sec =
+    local hh, mm, ss =
         string.match(
             text,
             "^(%d+):(%d%d):(%d%d)$"
         )
 
-    if hh and min and sec then
+    if hh and mm and ss then
 
         return
             tonumber(hh) * 3600
-            + tonumber(min) * 60
-            + tonumber(sec),
+            + tonumber(mm) * 60
+            + tonumber(ss),
             "HHMMSS"
+
+    end
+
+    -- MM:SS
+
+    local min, sec =
+        string.match(
+            text,
+            "^(%d+):(%d%d)$"
+        )
+
+    if min and sec then
+
+        return
+            tonumber(min) * 60
+            + tonumber(sec),
+            "MMSS"
 
     end
 
@@ -247,93 +361,14 @@ local function parseCountdown(text)
 end
 
 -- =========================================================
--- NUMBER DETECTION
--- =========================================================
-
-local function numericValue(value)
-
-    if typeof(value) == "number" then
-        return value
-    end
-
-    local n =
-        tonumber(
-            str(value)
-        )
-
-    return n
-end
-
--- =========================================================
--- CANDIDATE KEYWORD
--- =========================================================
-
-local function keywordCandidate(path, name, text)
-
-    local combined =
-        lower(path)
-        .. " "
-        .. lower(name)
-        .. " "
-        .. lower(text)
-
-    local keywords = {
-
-        "timer",
-        "count",
-        "counter",
-        "countdown",
-
-        "remaining",
-        "remain",
-
-        "duration",
-        "time",
-        "second",
-        "seconds",
-
-        "minute",
-        "minutes",
-
-        "hour",
-        "hours",
-
-        "luck",
-        "multiplier",
-
-        "base",
-        "active",
-
-        "server"
-
-    }
-
-    for _, word in ipairs(keywords) do
-
-        if string.find(
-            combined,
-            word,
-            1,
-            true
-        ) then
-
-            return true
-        end
-
-    end
-
-    return false
-end
-
--- =========================================================
--- ADD CANDIDATE
+-- CANDIDATE ADDER
 -- =========================================================
 
 local function addCandidate(
     instance,
     source,
     property,
-    rawValue,
+    value,
     reason
 )
 
@@ -351,92 +386,304 @@ local function addCandidate(
         return
     end
 
-    if ignored(path) then
+    if isIgnored(path) then
         return
     end
 
     local key =
-        source
-        .. "|"
-        .. path
+        path
         .. "|"
         .. property
 
-    if candidateMap[key] then
+    if candidateKeys[key] then
         return
     end
 
-    candidateMap[key] = true
+    candidateKeys[key] = true
+
+    local numeric =
+        toNumber(value)
+
+    local parsed,
+        format =
+        parseCountdown(value)
+
+    local reasonText =
+        reason or "candidate"
 
     counts.candidates += 1
 
-    local numeric =
-        numericValue(rawValue)
+    candidates[
+        counts.candidates
+    ] = {
 
-    local parsedSeconds,
+        index =
+            counts.candidates,
+
+        path =
+            path,
+
+        className =
+            instance.ClassName,
+
+        source =
+            source,
+
+        property =
+            property,
+
+        initialValue =
+            safeString(value),
+
+        numeric =
+            numeric,
+
+        parsedSeconds =
+            parsed,
+
         parsedFormat =
-        parseCountdown(rawValue)
+            format,
 
-    local distance = nil
-
-    if parsedSeconds then
-        distance =
-            math.abs(
-                parsedSeconds
+        distanceFromKnown =
+            parsed
+            and math.abs(
+                parsed
                 - KNOWN_TOTAL_SECONDS
             )
-    elseif numeric then
-        distance =
-            math.abs(
+            or numeric
+            and math.abs(
                 numeric
                 - KNOWN_TOTAL_SECONDS
             )
-    end
+            or nil,
 
-    table.insert(
-        candidates,
-        {
-            index = counts.candidates,
+        unixExpiryCandidate =
+            isPossibleUnixExpiry(
+                numeric
+            ),
 
-            path = path,
+        reason =
+            reasonText
+    }
 
-            className =
-                instance.ClassName,
-
-            source = source,
-
-            property = property,
-
-            initialValue =
-                str(rawValue),
-
-            numericValue =
-                numeric,
-
-            parsedSeconds =
-                parsedSeconds,
-
-            parsedFormat =
-                parsedFormat,
-
-            distanceFromKnown =
-                distance,
-
-            reason =
-                reason
-        }
-    )
+    candidateObjects[
+        counts.candidates
+    ] = instance
 end
 
 -- =========================================================
--- SCAN ROOT
+-- TEXT SCAN
 -- =========================================================
 
-local function scanRoot(root, rootName)
+local function inspectText(
+    instance,
+    rootName
+)
+
+    local text = ""
+
+    local ok = pcall(function()
+        text = instance.Text
+    end)
+
+    if not ok then
+        return
+    end
+
+    local numeric =
+        toNumber(text)
+
+    local parsed =
+        parseCountdown(text)
+
+    local interesting =
+        hasKeyword(
+            instance:GetFullName()
+        )
+        or hasKeyword(text)
+        or parsed ~= nil
+        or isNearKnownCountdown(
+            numeric
+        )
+
+    if interesting then
+
+        addCandidate(
+            instance,
+            "TEXT",
+            "Text",
+            text,
+            parsed
+            and "COUNTDOWN_TEXT"
+            or numeric
+            and "NUMERIC_TEXT"
+            or "KEYWORD_TEXT"
+        )
+
+    end
+end
+
+-- =========================================================
+-- VALUE SCAN
+-- =========================================================
+
+local function inspectValue(
+    instance
+)
+
+    local value = nil
+
+    local ok = pcall(function()
+        value = instance.Value
+    end)
+
+    if not ok then
+        return
+    end
+
+    local numeric =
+        toNumber(value)
+
+    local parsed =
+        parseCountdown(value)
+
+    local interesting =
+        hasKeyword(
+            instance:GetFullName()
+        )
+        or parsed ~= nil
+        or isNearKnownCountdown(
+            numeric
+        )
+        or isPossibleUnixExpiry(
+            numeric
+        )
+
+    if interesting then
+
+        addCandidate(
+            instance,
+            "VALUE",
+            "Value",
+            value,
+            parsed
+            and "COUNTDOWN_VALUE"
+            or isPossibleUnixExpiry(numeric)
+            and "EXPIRY_TIMESTAMP"
+            or numeric
+            and "NUMERIC_VALUE"
+            or "KEYWORD_VALUE"
+        )
+
+    end
+end
+
+-- =========================================================
+-- ATTRIBUTE SCAN
+-- =========================================================
+
+local function inspectAttributes(
+    instance
+)
+
+    local attrs = {}
+
+    local ok = pcall(function()
+        attrs =
+            instance:GetAttributes()
+    end)
+
+    if not ok then
+        return
+    end
+
+    for name, value in pairs(attrs) do
+
+        local lname =
+            lower(name)
+
+        -- We know this is useful,
+        -- but it is not the countdown itself.
+        if lname == "luckmultiplier" then
+
+            if counts.stats < MAX_STATS then
+
+                counts.stats += 1
+
+                table.insert(
+                    stats,
+                    {
+                        type = "LuckMultiplier",
+                        path =
+                            instance:GetFullName(),
+                        name = name,
+                        value =
+                            safeString(value),
+                        timestamp =
+                            os.time()
+                    }
+                )
+
+            end
+
+        else
+
+            local numeric =
+                toNumber(value)
+
+            local parsed =
+                parseCountdown(value)
+
+            local interesting =
+                hasKeyword(
+                    instance:GetFullName()
+                )
+                or hasKeyword(name)
+                or parsed ~= nil
+                or isNearKnownCountdown(
+                    numeric
+                )
+                or isPossibleUnixExpiry(
+                    numeric
+                )
+
+            if interesting then
+
+                addCandidate(
+                    instance,
+                    "ATTRIBUTE",
+                    name,
+                    value,
+                    parsed
+                    and "COUNTDOWN_ATTRIBUTE"
+                    or isPossibleUnixExpiry(numeric)
+                    and "EXPIRY_ATTRIBUTE"
+                    or "KEYWORD_ATTRIBUTE"
+                )
+
+            end
+
+        end
+    end
+end
+
+-- =========================================================
+-- ROOT SCANNER
+-- =========================================================
+
+local function scanRoot(
+    root,
+    rootName
+)
 
     if not root then
         return
     end
+
+    print(
+        "[KIMS] SCANNING:",
+        rootName
+    )
 
     local ok, descendants =
         pcall(function()
@@ -446,208 +693,190 @@ local function scanRoot(root, rootName)
     if not ok then
 
         addError(
-            "GET_DESCENDANTS",
-            rootName .. ": " .. str(descendants)
+            "SCAN_ROOT",
+            rootName
+            .. ": "
+            .. safeString(descendants)
         )
 
         return
     end
 
-    local list = {
-        root
-    }
+    -- Scan root itself.
 
-    for _, obj in ipairs(descendants) do
-        table.insert(
-            list,
-            obj
-        )
-    end
+    pcall(function()
 
-    for _, obj in ipairs(list) do
+        local class =
+            root.ClassName
 
-        local path = ""
-        local className = ""
+        if
+            class == "TextLabel"
+            or class == "TextButton"
+            or class == "TextBox"
+        then
+            inspectText(
+                root,
+                rootName
+            )
+        end
+
+        local valueClasses = {
+
+            StringValue = true,
+            IntValue = true,
+            NumberValue = true,
+            BoolValue = true
+
+        }
+
+        if valueClasses[class] then
+            inspectValue(root)
+        end
+
+        inspectAttributes(root)
+
+    end)
+
+    for _, instance in ipairs(descendants) do
+
+        if counts.candidates >= MAX_CANDIDATES then
+            break
+        end
 
         pcall(function()
 
-            path =
-                obj:GetFullName()
+            local class =
+                instance.ClassName
 
-            className =
-                obj.ClassName
+            if
+                class == "TextLabel"
+                or class == "TextButton"
+                or class == "TextBox"
+            then
+
+                inspectText(
+                    instance,
+                    rootName
+                )
+
+            end
+
+            if
+                class == "StringValue"
+                or class == "IntValue"
+                or class == "NumberValue"
+                or class == "BoolValue"
+            then
+
+                inspectValue(
+                    instance
+                )
+
+            end
+
+            inspectAttributes(
+                instance
+            )
 
         end)
 
-        if path ~= ""
-            and not ignored(path)
-        then
+    end
+end
 
-            -- =========================================
-            -- TEXT
-            -- =========================================
+-- =========================================================
+-- PLAYER STATS
+-- =========================================================
 
-            if
-                className == "TextLabel"
-                or className == "TextButton"
-                or className == "TextBox"
-            then
+local function collectPlayerStats()
 
-                local text = ""
+    print("[KIMS] COLLECTING PLAYER STATS")
 
-                pcall(function()
-                    text = obj.Text
-                end)
+    local containers = {
 
-                local parsedSeconds =
-                    parseCountdown(text)
+        p,
+        p:FindFirstChild("leaderstats"),
+        p:FindFirstChild("Data"),
+        p:FindFirstChild("Stats"),
+        p:FindFirstChild("PlayerData"),
+        p:FindFirstChild("Inventory"),
+        p:FindFirstChild("CharacterData")
 
-                local keyword =
-                    keywordCandidate(
-                        path,
-                        "",
-                        text
-                    )
+    }
 
-                if
-                    keyword
-                    or parsedSeconds
-                    or numericValue(text)
-                then
+    local seen = {}
 
-                    addCandidate(
-                        obj,
-                        "TEXT",
-                        "Text",
-                        text,
+    for _, container in ipairs(containers) do
 
-                        parsedSeconds
-                        and "COUNTDOWN_FORMAT"
-                        or keyword
-                        and "KEYWORD"
-                        or "NUMERIC_TEXT"
-                    )
+        if container and not seen[container] then
 
-                end
-
-            end
-
-            -- =========================================
-            -- VALUE OBJECTS
-            -- =========================================
-
-            local isValue =
-
-                className == "StringValue"
-                or className == "IntValue"
-                or className == "NumberValue"
-                or className == "BoolValue"
-
-            if isValue then
-
-                local value = nil
-
-                pcall(function()
-                    value = obj.Value
-                end)
-
-                local keyword =
-                    keywordCandidate(
-                        path,
-                        "",
-                        value
-                    )
-
-                local parsedSeconds =
-                    parseCountdown(value)
-
-                if
-                    keyword
-                    or parsedSeconds
-                    or numericValue(value)
-                then
-
-                    addCandidate(
-                        obj,
-                        "VALUE",
-                        "Value",
-                        value,
-
-                        parsedSeconds
-                        and "COUNTDOWN_FORMAT"
-                        or keyword
-                        and "KEYWORD"
-                        or "NUMERIC_VALUE"
-                    )
-
-                end
-
-            end
-
-            -- =========================================
-            -- ATTRIBUTES
-            -- =========================================
-
-            local attrs = {}
+            seen[container] = true
 
             pcall(function()
-                attrs = obj:GetAttributes()
-            end)
 
-            for name, value in pairs(attrs) do
+                local descendants =
+                    container:GetDescendants()
 
-                -- Do NOT treat LuckMultiplier itself
-                -- as a countdown candidate.
-                local lname =
-                    lower(name)
+                for _, obj in ipairs(
+                    descendants
+                ) do
 
-                local isMultiplier =
-                    lname == "luckmultiplier"
+                    if counts.stats >= MAX_STATS then
+                        return
+                    end
 
-                if not isMultiplier then
-
-                    local keyword =
-                        keywordCandidate(
-                            path,
-                            name,
-                            value
-                        )
-
-                    local parsedSeconds =
-                        parseCountdown(value)
+                    local class =
+                        obj.ClassName
 
                     if
-                        keyword
-                        or parsedSeconds
-                        or numericValue(value)
+                        class == "StringValue"
+                        or class == "IntValue"
+                        or class == "NumberValue"
+                        or class == "BoolValue"
                     then
 
-                        addCandidate(
-                            obj,
-                            "ATTRIBUTE",
-                            name,
-                            value,
+                        local value = nil
 
-                            parsedSeconds
-                            and "COUNTDOWN_FORMAT"
-                            or keyword
-                            and "KEYWORD"
-                            or "NUMERIC_ATTRIBUTE"
+                        pcall(function()
+                            value = obj.Value
+                        end)
+
+                        counts.stats += 1
+
+                        table.insert(
+                            stats,
+                            {
+                                type =
+                                    "PlayerStat",
+
+                                path =
+                                    obj:GetFullName(),
+
+                                name =
+                                    obj.Name,
+
+                                className =
+                                    class,
+
+                                value =
+                                    safeString(value),
+
+                                timestamp =
+                                    os.time()
+                            }
                         )
 
                     end
 
                 end
 
-            end
+            end)
 
         end
-
     end
 end
 
 -- =========================================================
--- FIND SERVER LUCK ROOTS
+-- KNOWN SERVER LUCK
 -- =========================================================
 
 local mainLuck = nil
@@ -677,63 +906,70 @@ pcall(function()
 
 end)
 
-print("[KIMS] COUNTDOWN HUNTER START")
-print("[KIMS] MAIN:", mainLuck ~= nil)
-print("[KIMS] ALT:", altLuck ~= nil)
-
--- =========================================================
--- INITIAL SCAN
--- =========================================================
-
-if mainLuck then
-    scanRoot(
-        mainLuck,
-        "MAIN"
-    )
-end
-
-if altLuck then
-    scanRoot(
-        altLuck,
-        "ALT"
-    )
-end
-
--- =========================================================
--- EXPLICIT KNOWN TIMER OBJECTS
--- =========================================================
-
-local function addKnownObject(
-    obj,
-    source,
-    property
+print(
+    "[KIMS] MAIN SERVER LUCK:",
+    mainLuck ~= nil
 )
 
-    if not obj then
-        return
-    end
+print(
+    "[KIMS] ALT SERVER LUCK:",
+    altLuck ~= nil
+)
 
-    local value = ""
+-- =========================================================
+-- KNOWN MULTIPLIER
+-- =========================================================
 
-    pcall(function()
+local initialMultiplier = nil
 
-        if property == "Text" then
-            value = obj.Text
+pcall(function()
 
-        elseif property == "Value" then
-            value = obj.Value
+    if mainLuck then
+
+        local display =
+            mainLuck
+            .GameLuckDisplayFrame
+
+        initialMultiplier =
+            display:GetAttribute(
+                "LuckMultiplier"
+            )
+
+        if counts.stats < MAX_STATS then
+
+            counts.stats += 1
+
+            table.insert(
+                stats,
+                {
+                    type =
+                        "KnownLuckMultiplier",
+
+                    path =
+                        display:GetFullName(),
+
+                    name =
+                        "LuckMultiplier",
+
+                    value =
+                        safeString(
+                            initialMultiplier
+                        ),
+
+                    timestamp =
+                        os.time()
+                }
+            )
+
         end
 
-    end)
+    end
 
-    addCandidate(
-        obj,
-        source,
-        property,
-        value,
-        "KNOWN_PATH"
-    )
-end
+end)
+
+-- =========================================================
+-- KNOWN TIMER OBJECTS
+-- =========================================================
 
 pcall(function()
 
@@ -745,10 +981,12 @@ pcall(function()
             .Toggles
             .Timer
 
-        addKnownObject(
+        addCandidate(
             timer,
-            "MAIN_KNOWN_TIMER",
-            "Text"
+            "KNOWN_MAIN_TIMER",
+            "Text",
+            timer.Text,
+            "KNOWN_TIMER_PATH"
         )
 
     end
@@ -765,10 +1003,12 @@ pcall(function()
             .Visual
             .BaseCounter
 
-        addKnownObject(
+        addCandidate(
             base,
-            "MAIN_BASE_COUNTER",
-            "Text"
+            "KNOWN_BASE_COUNTER",
+            "Text",
+            base.Text,
+            "KNOWN_BASE_COUNTER"
         )
 
     end
@@ -785,10 +1025,12 @@ pcall(function()
             .Toggles
             .Timer
 
-        addKnownObject(
+        addCandidate(
             timer,
-            "ALT_KNOWN_TIMER",
-            "Text"
+            "KNOWN_ALT_TIMER",
+            "Text",
+            timer.Text,
+            "KNOWN_ALT_TIMER"
         )
 
     end
@@ -796,148 +1038,95 @@ pcall(function()
 end)
 
 -- =========================================================
--- SNAPSHOT READER
+-- INITIAL ROOTS
 -- =========================================================
 
-local function readCandidate(candidate)
+collectPlayerStats()
 
-    local instance = nil
+scanRoot(
+    p,
+    "PLAYER"
+)
 
-    -- Re-resolve from PlayerGui using path
-    -- where possible.
+scanRoot(
+    pg,
+    "PLAYER_GUI"
+)
 
-    local success, result =
-        pcall(function()
+scanRoot(
+    ReplicatedStorage,
+    "REPLICATED_STORAGE"
+)
 
-            local current =
-                pg
+scanRoot(
+    Workspace,
+    "WORKSPACE"
+)
 
-            local full =
-                candidate.path
+scanRoot(
+    ReplicatedFirst,
+    "REPLICATED_FIRST"
+)
 
-            -- Direct known objects are more reliable.
-            if
-                candidate.source
-                == "MAIN_KNOWN_TIMER"
-            then
+pcall(function()
 
-                return
-                    mainLuck
-                    and mainLuck
-                    .Inside
-                    .Toggles
-                    .Timer
-
-            elseif
-                candidate.source
-                == "MAIN_BASE_COUNTER"
-            then
-
-                return
-                    mainLuck
-                    and mainLuck
-                    .Content
-                    .Visual
-                    .BaseCounter
-
-            elseif
-                candidate.source
-                == "ALT_KNOWN_TIMER"
-            then
-
-                return
-                    altLuck
-                    and altLuck
-                    .Inside
-                    .Toggles
-                    .Timer
-
-            end
-
-            -- Search current descendants for exact path.
-            if mainLuck then
-
-                if
-                    candidate.path
-                    == mainLuck:GetFullName()
-                then
-                    return mainLuck
-                end
-
-                for _, obj in
-                    ipairs(
-                        mainLuck:GetDescendants()
-                    )
-                do
-
-                    if
-                        obj:GetFullName()
-                        == full
-                    then
-                        return obj
-                    end
-
-                end
-
-            end
-
-            if altLuck then
-
-                if
-                    candidate.path
-                    == altLuck:GetFullName()
-                then
-                    return altLuck
-                end
-
-                for _, obj in
-                    ipairs(
-                        altLuck:GetDescendants()
-                    )
-                do
-
-                    if
-                        obj:GetFullName()
-                        == full
-                    then
-                        return obj
-                    end
-
-                end
-
-            end
-
-            return nil
-        end)
-
-    if not success then
-        return nil
+    if p.Character then
+        scanRoot(
+            p.Character,
+            "CHARACTER"
+        )
     end
 
-    instance = result
+end)
 
-    if not instance then
+pcall(function()
+
+    local backpack =
+        p:FindFirstChild("Backpack")
+
+    if backpack then
+
+        scanRoot(
+            backpack,
+            "BACKPACK"
+        )
+
+    end
+
+end)
+
+-- =========================================================
+-- SNAPSHOT READ
+-- =========================================================
+
+local function readCandidate(index)
+
+    local obj =
+        candidateObjects[index]
+
+    local candidate =
+        candidates[index]
+
+    if not obj or not candidate then
         return nil
     end
 
     local value = nil
 
-    pcall(function()
+    local ok = pcall(function()
 
         if candidate.property == "Text" then
 
-            value =
-                instance.Text
+            value = obj.Text
 
         elseif candidate.property == "Value" then
 
-            value =
-                instance.Value
+            value = obj.Value
 
         else
 
             value =
-                instance:GetAttribute(
+                obj:GetAttribute(
                     candidate.property
                 )
 
@@ -945,33 +1134,44 @@ local function readCandidate(candidate)
 
     end)
 
+    if not ok then
+        return nil
+    end
+
     return value
 end
 
 -- =========================================================
--- RECORD SNAPSHOT
+-- RECORD
 -- =========================================================
 
-local function recordCandidate(
-    candidate,
+local function record(
+    index,
     second
 )
 
+    if counts.records >= MAX_RECORDS then
+        return
+    end
+
+    local candidate =
+        candidates[index]
+
     local value =
-        readCandidate(candidate)
+        readCandidate(index)
 
     if value == nil then
         return
     end
 
     local text =
-        str(value)
+        safeString(value)
 
     local numeric =
-        numericValue(value)
+        toNumber(value)
 
-    local parsedSeconds,
-        parsedFormat =
+    local parsed,
+        format =
         parseCountdown(text)
 
     local key =
@@ -986,93 +1186,96 @@ local function recordCandidate(
         old ~= nil
         and old ~= text
 
-    local countdownDelta = nil
+    local oldParsed = nil
 
-    if old ~= nil then
+    if old then
 
-        local oldSeconds =
+        oldParsed =
             parseCountdown(old)
 
-        if type(oldSeconds) == "number"
-            and parsedSeconds
-        then
+    end
+
+    local delta = nil
+
+    if
+        type(oldParsed) == "number"
+        and type(parsed) == "number"
+    then
+
+        delta =
+            parsed
+            - oldParsed
+
+    end
+
+    local distance =
+        parsed
+        and math.abs(
+            parsed
+            - KNOWN_TOTAL_SECONDS
+        )
+        or numeric
+        and math.abs(
+            numeric
+            - KNOWN_TOTAL_SECONDS
+        )
+        or nil
+
+    counts.records += 1
+
+    table.insert(
+        records,
+        {
+            index =
+                counts.records,
+
+            second =
+                second,
+
+            timestamp =
+                os.time(),
+
+            path =
+                candidate.path,
+
+            className =
+                candidate.className,
+
+            source =
+                candidate.source,
+
+            property =
+                candidate.property,
+
+            value =
+                text,
+
+            numeric =
+                numeric,
+
+            parsedSeconds =
+                parsed,
+
+            parsedFormat =
+                format,
+
+            distanceFromKnown =
+                distance,
+
+            changed =
+                changed,
 
             countdownDelta =
-                parsedSeconds
-                - oldSeconds
+                delta
+        }
+    )
 
-        end
+    -- =====================================================
+    -- CHANGE RECORD
+    -- =====================================================
 
-    end
-
-    if counts.records < MAX_RECORDS then
-
-        counts.records += 1
-
-        table.insert(
-            records,
-            {
-                index =
-                    counts.records,
-
-                second =
-                    second,
-
-                timestamp =
-                    os.time(),
-
-                path =
-                    candidate.path,
-
-                className =
-                    candidate.className,
-
-                source =
-                    candidate.source,
-
-                property =
-                    candidate.property,
-
-                value =
-                    text,
-
-                numeric =
-                    numeric,
-
-                parsedSeconds =
-                    parsedSeconds,
-
-                parsedFormat =
-                    parsedFormat,
-
-                changed =
-                    changed,
-
-                countdownDelta =
-                    countdownDelta,
-
-                distanceFromKnown =
-                    parsedSeconds
-                    and math.abs(
-                        parsedSeconds
-                        - KNOWN_TOTAL_SECONDS
-                    )
-                    or numeric
-                    and math.abs(
-                        numeric
-                        - KNOWN_TOTAL_SECONDS
-                    )
-                    or nil
-            }
-        )
-
-    end
-
-    -- =============================================
-    -- CHANGE
-    -- =============================================
-
-    if changed
+    if
+        changed
         and counts.changes < MAX_CHANGES
     then
 
@@ -1108,24 +1311,14 @@ local function recordCandidate(
                 current =
                     text,
 
-                countdownDelta =
-                    countdownDelta,
-
                 parsedSeconds =
-                    parsedSeconds,
+                    parsed,
+
+                countdownDelta =
+                    delta,
 
                 distanceFromKnown =
-                    parsedSeconds
-                    and math.abs(
-                        parsedSeconds
-                        - KNOWN_TOTAL_SECONDS
-                    )
-                    or numeric
-                    and math.abs(
-                        numeric
-                        - KNOWN_TOTAL_SECONDS
-                    )
-                    or nil
+                    distance
             }
         )
 
@@ -1136,35 +1329,33 @@ local function recordCandidate(
 end
 
 -- =========================================================
--- DYNAMIC SNAPSHOTS
+-- SNAPSHOT LOOP
 -- =========================================================
 
 print(
-    "[KIMS] CANDIDATES:",
+    "[KIMS] TOTAL CANDIDATES:",
     #candidates
 )
 
 print(
-    "[KIMS] WATCHING FOR",
-    SNAPSHOT_SECONDS,
-    "SECONDS"
+    "[KIMS] STARTING",
+    SNAPSHOT_COUNT,
+    "SECOND RUNTIME WATCH"
 )
 
-for second = 0, SNAPSHOT_SECONDS do
+for second = 0, SNAPSHOT_COUNT do
 
     print(
-        "[KIMS] SECOND:",
+        "[KIMS] WATCH SECOND:",
         second
     )
 
-    for _, candidate in
-        ipairs(candidates)
-    do
+    for index = 1, #candidates do
 
         pcall(function()
 
-            recordCandidate(
-                candidate,
+            record(
+                index,
                 second
             )
 
@@ -1172,14 +1363,66 @@ for second = 0, SNAPSHOT_SECONDS do
 
     end
 
-    if second < SNAPSHOT_SECONDS then
-        task.wait(INTERVAL)
+    -- Re-check the known multiplier.
+
+    pcall(function()
+
+        if mainLuck then
+
+            local display =
+                mainLuck
+                .GameLuckDisplayFrame
+
+            local multiplier =
+                display:GetAttribute(
+                    "LuckMultiplier"
+                )
+
+            if counts.stats < MAX_STATS then
+
+                counts.stats += 1
+
+                table.insert(
+                    stats,
+                    {
+                        type =
+                            "MultiplierSnapshot",
+
+                        path =
+                            display:GetFullName(),
+
+                        name =
+                            "LuckMultiplier",
+
+                        value =
+                            safeString(
+                                multiplier
+                            ),
+
+                        second =
+                            second,
+
+                        timestamp =
+                            os.time()
+                    }
+                )
+
+            end
+
+        end
+
+    end)
+
+    if second < SNAPSHOT_COUNT then
+        task.wait(
+            SNAPSHOT_INTERVAL
+        )
     end
 
 end
 
 -- =========================================================
--- MULTIPLIER FINAL CHECK
+-- FINAL MULTIPLIER
 -- =========================================================
 
 local finalMultiplier = nil
@@ -1188,12 +1431,10 @@ pcall(function()
 
     if mainLuck then
 
-        local display =
+        finalMultiplier =
             mainLuck
             .GameLuckDisplayFrame
-
-        finalMultiplier =
-            display:GetAttribute(
+            :GetAttribute(
                 "LuckMultiplier"
             )
 
@@ -1202,13 +1443,69 @@ pcall(function()
 end)
 
 -- =========================================================
+-- SUMMARY
+-- =========================================================
+
+local summary = {
+
+    mainServerLuckFound =
+        mainLuck ~= nil,
+
+    altServerLuckFound =
+        altLuck ~= nil,
+
+    initialMultiplier =
+        safeString(
+            initialMultiplier
+        ),
+
+    finalMultiplier =
+        safeString(
+            finalMultiplier
+        ),
+
+    knownRemaining =
+        "01h 01m 45s",
+
+    knownRemainingSeconds =
+        KNOWN_TOTAL_SECONDS,
+
+    candidates =
+        #candidates,
+
+    records =
+        #records,
+
+    changes =
+        #changes,
+
+    stats =
+        #stats,
+
+    errors =
+        #errors,
+
+    snapshotCount =
+        SNAPSHOT_COUNT,
+
+    snapshotInterval =
+        SNAPSHOT_INTERVAL,
+
+    nextLuckCounterIgnored =
+        true,
+
+    scanner =
+        "KIMS-ZETSU-STATE-HUNTER-V1"
+}
+
+-- =========================================================
 -- PAYLOAD
 -- =========================================================
 
 local payload = {
 
     version =
-        "KIMS-LUCK-COUNTDOWN-HUNTER-V1",
+        "KIMS-ZETSU-STATE-HUNTER-V1",
 
     userId =
         p.UserId,
@@ -1222,9 +1519,9 @@ local payload = {
     knownState = {
 
         multiplier =
-            8,
+            KNOWN_MULTIPLIER,
 
-        remainingText =
+        remaining =
             "01h 01m 45s",
 
         remainingSeconds =
@@ -1232,47 +1529,11 @@ local payload = {
 
     },
 
-    actualState = {
+    summary =
+        summary,
 
-        finalMultiplier =
-            finalMultiplier
-
-    },
-
-    config = {
-
-        snapshotSeconds =
-            SNAPSHOT_SECONDS,
-
-        interval =
-            INTERVAL,
-
-        nextLuckCounterIgnored =
-            true
-
-    },
-
-    summary = {
-
-        mainFound =
-            mainLuck ~= nil,
-
-        altFound =
-            altLuck ~= nil,
-
-        candidateCount =
-            #candidates,
-
-        recordCount =
-            #records,
-
-        changeCount =
-            #changes,
-
-        errorCount =
-            #errors
-
-    },
+    stats =
+        stats,
 
     candidates =
         candidates,
@@ -1310,7 +1571,9 @@ if not encodeOk then
 
     warn(
         "[KIMS] JSON ERROR:",
-        str(encodeError)
+        safeString(
+            encodeError
+        )
     )
 
     return
@@ -1365,7 +1628,7 @@ if
 then
 
     print(
-        "[KIMS] COUNTDOWN HUNTER UPLOAD OK"
+        "[KIMS] ZETSU STATE HUNTER UPLOAD OK"
     )
 
     print(
@@ -1384,14 +1647,27 @@ then
     )
 
     print(
-        "[KIMS] FINAL MULTIPLIER:",
-        str(finalMultiplier)
+        "[KIMS] STATS:",
+        #stats
     )
+
+    print(
+        "[KIMS] INITIAL MULTIPLIER:",
+        safeString(
+            initialMultiplier
+        )
+    )
+
+    print(
+        "[KIMS] FINAL MULTIPLIER:",
+        safeString(
+            finalMultiplier
+        )
 
 else
 
     warn(
-        "[KIMS] COUNTDOWN HUNTER UPLOAD FAILED"
+        "[KIMS] ZETSU STATE HUNTER UPLOAD FAILED"
     )
 
     if response then
@@ -1415,7 +1691,7 @@ else
 
         warn(
             "[KIMS] ERROR:",
-            str(response)
+            safeString(response)
         )
 
     end
@@ -1423,5 +1699,5 @@ else
 end
 
 print(
-    "[KIMS] COUNTDOWN HUNTER FINISHED"
+    "[KIMS] ZETSU STATE HUNTER FINISHED"
 )
