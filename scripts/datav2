@@ -1,126 +1,96 @@
-    if state then
-        addObject(
-            objects,
-            "SERVER_LUCK.Active",
-            "ServerLuck",
-            state.multiplier
-                and ("Multiplier: x" .. tostring(state.multiplier))
-                or "Multiplier: Not detected"
-        )
+-- KIMS Server Luck -> existing debug.php scanner
+-- Sends TOP-LEVEL attributes / objects / values so the current
+-- debug.php page can render them in the existing card.
 
-        addObject(
-            objects,
-            "SERVER_LUCK.Timer",
-            "ServerLuckTimer",
-            state.timerText ~= ""
-                and ("Timer: " .. state.timerText)
-                or "Timer: Not detected"
-        )
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
 
-        addObject(
-            objects,
-            "SERVER_LUCK.Source",
-            "ServerLuckSource",
-            state.source
-        )
+local player = Players.LocalPlayer
 
-        if state.timerPath ~= "" then
-            addObject(
-                objects,
-                state.timerPath,
-                "TextLabel",
-                state.timerText
-            )
-        end
+local API_URL = "https://kims.asia/statakun/api/debug.php"
+local API_KEY = "stat-kims2026"
+local INTERVAL = 2
 
-        if state.multiplierPath ~= "" then
-            addValue(
-                values,
-                state.multiplierPath,
-                "LuckMultiplier",
-                state.multiplier or "Unknown"
-            )
-        end
-
-        if state.timerSeconds then
-            addValue(
-                values,
-                "SERVER_LUCK.TimerSeconds",
-                "CountdownSeconds",
-                state.timerSeconds
-            )
-        end
-
-        if state.multiplier then
-            attributes["ActiveLuckMultiplier"] =
-                "x" .. tostring(state.multiplier)
-        end
-
-        if state.timerText ~= "" then
-            attributes["ActiveLuckTimer"] = state.timerText
-        end
-
-        if state.source ~= "" then
-            attributes["ActiveLuckSource"] = state.source
-        end
-    else
-        addObject(
-            objects,
-            "SERVER_LUCK",
-            "ServerLuck",
-            "Server Luck UI not found"
-        )
+local function safe(fn, fallback)
+    local ok, value = pcall(fn)
+    if ok then
+        return value
     end
-
-    local payload = {
-        version = "LUCK-WEB-DEBUG-V2",
-        userId = player.UserId,
-        username = player.Name,
-        clientTimestamp = os.time(),
-
-        -- These MUST stay top-level for the current debug.php.
-        attributes = attributes,
-        objects = objects,
-        values = values
-    }
-
-    pcall(function()
-        HttpService:RequestAsync({
-            Url = API_URL,
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json",
-                ["Authorization"] = "Bearer " .. API_KEY
-            },
-            Body = HttpService:JSONEncode(payload)
-        })
-    end)
+    return fallback
 end
 
-local lastSignature = nil
+local function parseMultiplier(value)
+    if value == nil then return nil end
 
-local function scan()
-    local state = getLuckState()
+    local s = tostring(value):lower()
 
-    local signature = HttpService:JSONEncode({
-        multiplier = state and state.multiplier,
-        timer = state and state.timerText,
-        seconds = state and state.timerSeconds,
-        source = state and state.source
+    local n =
+        s:match("[x×]%s*(%d+)")
+        or s:match("(%d+)%s*[x×]")
+        or s:match("luckmultiplier[^%d]*(%d+)")
+
+    n = tonumber(n)
+
+    if n == 2 or n == 4 or n == 6 or n == 8 then
+        return n
+    end
+
+    return nil
+end
+
+local function parseCountdown(value)
+    if value == nil then return nil end
+
+    local s = tostring(value)
+
+    local h, m, sec =
+        s:match("(%d+)%s*[hH]%s*(%d+)%s*[mM]%s*(%d+)%s*[sS]")
+
+    if h then
+        return tonumber(h) * 3600
+            + tonumber(m) * 60
+            + tonumber(sec)
+    end
+
+    h, m, sec = s:match("(%d+):(%d+):(%d+)")
+
+    if h then
+        return tonumber(h) * 3600
+            + tonumber(m) * 60
+            + tonumber(sec)
+    end
+
+    m, sec = s:match("(%d+)%s*[mM]%s*(%d+)%s*[sS]")
+
+    if m then
+        return tonumber(m) * 60 + tonumber(sec)
+    end
+
+    sec = s:match("(%d+)%s*[sS]")
+
+    if sec then
+        return tonumber(sec)
+    end
+
+    return nil
+end
+
+local function getText(obj)
+    return safe(function()
+        return obj.Text
+    end, "")
+end
+
+local function getFullName(obj)
+    return safe(function()
+        return obj:GetFullName()
+    end, "?")
+end
+
+local function addObject(list, path, className, text)
+    table.insert(list, {
+        path = tostring(path),
+        className = tostring(className),
+        text = tostring(text or "")
     })
-
-    -- First scan always sends.
-    -- Later scans send whenever Luck state changes.
-    if signature ~= lastSignature then
-        lastSignature = signature
-        send(state)
-    end
 end
-
-scan()
-
-task.spawn(function()
-    while task.wait(INTERVAL) do
-        scan()
-    end
-end)
