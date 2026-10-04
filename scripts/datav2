@@ -1,96 +1,387 @@
--- KIMS Server Luck -> existing debug.php scanner
--- Sends TOP-LEVEL attributes / objects / values so the current
--- debug.php page can render them in the existing card.
-
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 
-local player = Players.LocalPlayer
+local p = Players.LocalPlayer
+local pg = p:WaitForChild("PlayerGui")
 
-local API_URL = "https://kims.asia/statakun/api/debug.php"
-local API_KEY = "stat-kims2026"
-local INTERVAL = 2
+-- =========================================
+-- CONFIG
+-- =========================================
 
-local function safe(fn, fallback)
-    local ok, value = pcall(fn)
-    if ok then
-        return value
-    end
-    return fallback
-end
+local MAX_SNAPSHOTS = 6
+local INTERVAL = 1
 
-local function parseMultiplier(value)
-    if value == nil then return nil end
+local snapshots = {}
+local attributes = {}
+local objects = {}
+local values = {}
 
-    local s = tostring(value):lower()
+-- =========================================
+-- HELPERS
+-- =========================================
 
-    local n =
-        s:match("[x×]%s*(%d+)")
-        or s:match("(%d+)%s*[x×]")
-        or s:match("luckmultiplier[^%d]*(%d+)")
-
-    n = tonumber(n)
-
-    if n == 2 or n == 4 or n == 6 or n == 8 then
-        return n
+local function addObject(path, className, text)
+    if #objects >= 20 then
+        return
     end
 
-    return nil
-end
-
-local function parseCountdown(value)
-    if value == nil then return nil end
-
-    local s = tostring(value)
-
-    local h, m, sec =
-        s:match("(%d+)%s*[hH]%s*(%d+)%s*[mM]%s*(%d+)%s*[sS]")
-
-    if h then
-        return tonumber(h) * 3600
-            + tonumber(m) * 60
-            + tonumber(sec)
-    end
-
-    h, m, sec = s:match("(%d+):(%d+):(%d+)")
-
-    if h then
-        return tonumber(h) * 3600
-            + tonumber(m) * 60
-            + tonumber(sec)
-    end
-
-    m, sec = s:match("(%d+)%s*[mM]%s*(%d+)%s*[sS]")
-
-    if m then
-        return tonumber(m) * 60 + tonumber(sec)
-    end
-
-    sec = s:match("(%d+)%s*[sS]")
-
-    if sec then
-        return tonumber(sec)
-    end
-
-    return nil
-end
-
-local function getText(obj)
-    return safe(function()
-        return obj.Text
-    end, "")
-end
-
-local function getFullName(obj)
-    return safe(function()
-        return obj:GetFullName()
-    end, "?")
-end
-
-local function addObject(list, path, className, text)
-    table.insert(list, {
-        path = tostring(path),
-        className = tostring(className),
+    table.insert(objects, {
+        path = path,
+        className = className,
         text = tostring(text or "")
     })
+end
+
+local function addValue(path, className, value)
+    if #values >= 20 then
+        return
+    end
+
+    table.insert(values, {
+        path = path,
+        className = className,
+        value = tostring(value)
+    })
+end
+
+local function addAttribute(path, name, value)
+    if #attributes >= 20 then
+        return
+    end
+
+    table.insert(attributes, {
+        path = path,
+        name = name,
+        value = tostring(value)
+    })
+end
+
+local function addSnapshot(label, path, text)
+    if #snapshots >= MAX_SNAPSHOTS then
+        return
+    end
+
+    table.insert(snapshots, {
+        index = #snapshots + 1,
+        timestamp = os.time(),
+        label = label,
+        path = path,
+        text = tostring(text or "")
+    })
+end
+
+-- =========================================
+-- FIND MAIN SERVER LUCK
+-- =========================================
+
+local mainLuck = nil
+
+pcall(function()
+
+    mainLuck = pg
+        :WaitForChild("Exclusive Store")
+        .Main.Content.Frame.Items.SERVER_LUCK["Server Luck"]
+
+end)
+
+-- =========================================
+-- FIND ALT SERVER LUCK
+-- =========================================
+
+local altLuck = nil
+
+pcall(function()
+
+    altLuck = pg
+        :WaitForChild("!!! Server Luck")
+        .Frame["Server Luck"]
+
+end)
+
+-- =========================================
+-- INITIAL DIAGNOSTIC
+-- =========================================
+
+if mainLuck then
+
+    pcall(function()
+
+        local timer = mainLuck.Inside.Toggles.Timer
+        local base = mainLuck.Content.Visual.BaseCounter
+        local display = mainLuck.GameLuckDisplayFrame
+
+        -- TIMER INITIAL
+        addObject(
+            timer:GetFullName(),
+            timer.ClassName,
+            timer.Text
+        )
+
+        -- BASE COUNTER
+        addObject(
+            base:GetFullName(),
+            base.ClassName,
+            base.Text
+        )
+
+        -- MULTIPLIER
+        local multiplier =
+            display:GetAttribute("LuckMultiplier")
+
+        if multiplier ~= nil then
+
+            addAttribute(
+                display:GetFullName(),
+                "LuckMultiplier",
+                multiplier
+            )
+
+            addValue(
+                display:GetFullName() ..
+                    " [LuckMultiplier]",
+                "Attribute",
+                multiplier
+            )
+
+        end
+
+    end)
+
+end
+
+-- =========================================
+-- ALT INITIAL
+-- =========================================
+
+if altLuck then
+
+    pcall(function()
+
+        local timer =
+            altLuck.Inside.Toggles.Timer
+
+        addObject(
+            timer:GetFullName(),
+            timer.ClassName,
+            timer.Text
+        )
+
+    end)
+
+end
+
+-- =========================================
+-- TIMER SNAPSHOT
+-- =========================================
+
+for i = 1, MAX_SNAPSHOTS do
+
+    -- MAIN TIMER
+    if mainLuck then
+
+        pcall(function()
+
+            local timer =
+                mainLuck.Inside.Toggles.Timer
+
+            addSnapshot(
+                "MAIN_TIMER",
+                timer:GetFullName(),
+                timer.Text
+            )
+
+        end)
+
+    end
+
+    -- ALT TIMER
+    if altLuck then
+
+        pcall(function()
+
+            local timer =
+                altLuck.Inside.Toggles.Timer
+
+            addSnapshot(
+                "ALT_TIMER",
+                timer:GetFullName(),
+                timer.Text
+            )
+
+        end)
+
+    end
+
+    if i < MAX_SNAPSHOTS then
+        task.wait(INTERVAL)
+    end
+
+end
+
+-- =========================================
+-- SECOND MULTIPLIER CHECK
+-- =========================================
+
+if mainLuck then
+
+    pcall(function()
+
+        local display =
+            mainLuck.GameLuckDisplayFrame
+
+        local multiplier =
+            display:GetAttribute("LuckMultiplier")
+
+        if multiplier ~= nil then
+
+            addAttribute(
+                display:GetFullName(),
+                "LuckMultiplier_FINAL",
+                multiplier
+            )
+
+        end
+
+    end)
+
+end
+
+-- =========================================
+-- PAYLOAD
+-- =========================================
+
+local payload = {
+
+    version = "LUCK-TIMER-DIAGNOSTIC-V3",
+
+    userId = p.UserId,
+
+    username = p.Name,
+
+    clientTimestamp = os.time(),
+
+    snapshots = snapshots,
+
+    attributes = attributes,
+
+    objects = objects,
+
+    values = values,
+
+    summary = {
+
+        maxSnapshots = MAX_SNAPSHOTS,
+
+        interval = INTERVAL,
+
+        snapshotCount = #snapshots,
+
+        mainFound = mainLuck ~= nil,
+
+        altFound = altLuck ~= nil,
+
+        nextLuckCounterIgnored = true
+
+    },
+
+    ping = true,
+
+}
+
+-- =========================================
+-- UPLOAD
+-- =========================================
+
+local body
+
+local encodeOk, encodeError = pcall(function()
+
+    body = HttpService:JSONEncode(payload)
+
+end)
+
+if not encodeOk then
+
+    warn(
+        "[KIMS] JSON ERROR:",
+        tostring(encodeError)
+    )
+
+    return
+
+end
+
+local ok, response = pcall(function()
+
+    return HttpService:RequestAsync({
+
+        Url =
+            "https://kims.asia/statakun/api/debug.php",
+
+        Method = "POST",
+
+        Headers = {
+
+            ["Content-Type"] =
+                "application/json",
+
+            ["Authorization"] =
+                "Bearer stat-kims2026"
+
+        },
+
+        Body = body
+
+    })
+
+end)
+
+-- =========================================
+-- RESULT
+-- =========================================
+
+if ok and response and response.Success then
+
+    print(
+        "[KIMS] TIMER DIAGNOSTIC UPLOAD OK"
+    )
+
+    print(
+        "[KIMS] SNAPSHOTS:",
+        #snapshots
+    )
+
+    print(
+        "[KIMS] MAIN:",
+        mainLuck ~= nil
+    )
+
+    print(
+        "[KIMS] ALT:",
+        altLuck ~= nil
+    )
+
+else
+
+    warn(
+        "[KIMS] TIMER DIAGNOSTIC UPLOAD FAILED"
+    )
+
+    if response then
+
+        warn(
+            "[KIMS] HTTP:",
+            response.StatusCode,
+            response.StatusMessage
+        )
+
+    else
+
+        warn(
+            "[KIMS] ERROR:",
+            tostring(response)
+        )
+
+    end
+
 end
