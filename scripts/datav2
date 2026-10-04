@@ -18,13 +18,13 @@ local INTERVAL = 1
 local MAX_OBJECTS = 20
 local MAX_VALUES = 20
 local MAX_ATTRIBUTES = 20
-local MAX_SCAN_DEPTH = 5000
-local MAX_RS_DEPTH = 5000
+local MAX_TARGETS = 40
 
 local snapshots = {}
 local attributes = {}
 local objects = {}
 local values = {}
+local targetSeen = {}
 
 -- =========================================
 -- HELPERS
@@ -38,6 +38,7 @@ end
 
 local function addObject(path, className, text)
     if #objects >= MAX_OBJECTS then return end
+
     table.insert(objects, {
         path = tostring(path or ""),
         className = tostring(className or ""),
@@ -47,6 +48,7 @@ end
 
 local function addValue(path, className, value)
     if #values >= MAX_VALUES then return end
+
     table.insert(values, {
         path = tostring(path or ""),
         className = tostring(className or ""),
@@ -56,6 +58,7 @@ end
 
 local function addAttribute(path, name, value)
     if #attributes >= MAX_ATTRIBUTES then return end
+
     table.insert(attributes, {
         path = tostring(path or ""),
         name = tostring(name or ""),
@@ -65,6 +68,7 @@ end
 
 local function addSnapshot(label, path, text)
     if #snapshots >= MAX_SNAPSHOTS then return end
+
     table.insert(snapshots, {
         index = #snapshots + 1,
         timestamp = os.time(),
@@ -75,22 +79,18 @@ local function addSnapshot(label, path, text)
 end
 
 local function getFullName(obj)
-    return safe(function() return obj:GetFullName() end, "?")
+    return safe(function()
+        return obj:GetFullName()
+    end, "?")
+end
+
+local function isIgnored(path)
+    return tostring(path):find("NextLuckCounter", 1, true) ~= nil
 end
 
 local function parseMultiplier(value)
     if value == nil then return nil end
-    local s = tostring(value):lower()
-    local n =
-        s:match("[x×]%s*(%d+)")
-        or s:match("(%d+)%s*[x×]")
-        or s:match("luckmultiplier[^%d]*(%d+)")
-    n = tonumber(n)
-    if n == 2 or n == 4 or n == 6 or n == 8 then
-        return n
-    end
-    return nil
-end
 
-local function parseCountdown(value)
-    if value == nil then return nil end
+    local s = tostring(value):lower()
+
+    local n =
