@@ -1,608 +1,622 @@
--- KIMS TECH | INVENTORY AUTO CAPTURE V12
--- Fish It / Roblox Delta Android. READ ONLY.
--- Starts automatically. Open every inventory tab normally, press STOP, then SALIN.
--- Observes client-visible GUI instances and selected local player data containers.
--- Does NOT inspect server storage, intercept network/remotes, require modules,
--- call getgc, scroll, modify inventory, upload, or save credentials.
+-- KIMS TECH | INVENTORY AUTO READER V13
+-- Roblox Fish It / Delta Android | read-only client GUI recorder.
+-- Starts recording immediately. Open all 8 inventory tabs once, then STOP > SALIN.
+-- Identifies Fish vs Items by the actual tab pressed, not their shared Inventory2 page.
+-- Counter evidence includes its source path; visible tile count is NEVER owned-item count.
+-- No require/getgc/remotes/network/upload/auto-scroll or inventory mutation.
 
 local Players = game:GetService('Players')
-local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local HttpService = game:GetService('HttpService')
+local UserInputService = game:GetService('UserInputService')
 local player = Players.LocalPlayer
 if not player then return end
 local pg = player:WaitForChild('PlayerGui')
 
--- Shut down an older instance cleanly if the script is executed again.
-local previous = pg:FindFirstChild('KIMSInventoryCaptureV12')
-if previous then
-    local stopSignal = previous:FindFirstChild('KIMS_StopRecorder')
-    if stopSignal and stopSignal:IsA('BindableEvent') then
-        pcall(function() stopSignal:Fire() end)
-    end
-    pcall(function() previous:Destroy() end)
+local prev = pg:FindFirstChild('KIMSInventoryV13')
+if prev then
+    local stop = prev:FindFirstChild('KIMS_Shutdown')
+    if stop and stop:IsA('BindableEvent') then pcall(function() stop:Fire() end) end
+    pcall(function() prev:Destroy() end)
 end
 
 local screen = Instance.new('ScreenGui')
-screen.Name = 'KIMSInventoryCaptureV12'
-screen.ResetOnSpawn = false
-screen.DisplayOrder = 999
-screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screen.Parent = pg
-local shutdownSignal = Instance.new('BindableEvent')
-shutdownSignal.Name = 'KIMS_StopRecorder'
-shutdownSignal.Parent = screen
+screen.Name='KIMSInventoryV13'
+screen.ResetOnSpawn=false
+screen.DisplayOrder=990
+screen.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+screen.Parent=pg
+local signal=Instance.new('BindableEvent')
+signal.Name='KIMS_Shutdown'
+signal.Parent=screen
 
-local panel = Instance.new('Frame')
-panel.Name = 'RecorderPanel'
-panel.Size = UDim2.new(.90,0,0,116)
-panel.Position = UDim2.new(.05,0,.055,0)
-panel.BackgroundColor3 = Color3.fromRGB(13,20,37)
-panel.BorderSizePixel = 0
-panel.Active = true
-panel.Parent = screen
-Instance.new('UICorner',panel).CornerRadius = UDim.new(0,10)
-local stroke = Instance.new('UIStroke',panel)
-stroke.Color = Color3.fromRGB(104,96,221)
-stroke.Thickness = 2
-
-local title = Instance.new('TextLabel')
-title.Name = 'DragHandle'
-title.Text = 'KIMS CAPTURE V12  |  REC OTOMATIS'
-title.Font = Enum.Font.GothamBold
-title.TextSize = 14
-title.TextColor3 = Color3.fromRGB(217,211,255)
-title.BackgroundTransparency = 1
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Position = UDim2.new(.025,0,0,5)
-title.Size = UDim2.new(.95,0,0,29)
-title.Active = true
-title.Parent = panel
-
-local function makeButton(s,x,w)
-    local b = Instance.new('TextButton')
-    b.Size = UDim2.new(w,0,0,34)
-    b.Position = UDim2.new(x,0,0,40)
-    b.BackgroundColor3 = Color3.fromRGB(68,61,129)
-    b.TextColor3 = Color3.fromRGB(255,255,255)
-    b.Font = Enum.Font.GothamBold
-    b.TextScaled = true
-    b.Text = s
-    b.Parent = panel
-    Instance.new('UICorner',b).CornerRadius = UDim.new(0,6)
+local panel=Instance.new('Frame')
+panel.Size=UDim2.new(.92,0,0,112)
+panel.Position=UDim2.new(.04,0,.055,0)
+panel.BackgroundColor3=Color3.fromRGB(13,20,37)
+panel.BorderSizePixel=0
+panel.Active=true
+panel.Parent=screen
+Instance.new('UICorner',panel).CornerRadius=UDim.new(0,10)
+local stroke=Instance.new('UIStroke',panel)
+stroke.Color=Color3.fromRGB(116,94,226)
+stroke.Thickness=2
+local title=Instance.new('TextLabel')
+title.BackgroundTransparency=1
+title.Text='KIMS V13 | AUTO CAPTURE AKTIF'
+title.TextXAlignment=Enum.TextXAlignment.Left
+title.TextColor3=Color3.fromRGB(219,213,255)
+title.TextSize=14
+title.Font=Enum.Font.GothamBold
+title.Size=UDim2.new(.96,0,0,31)
+title.Position=UDim2.new(.02,0,0,3)
+title.Active=true
+title.Parent=panel
+local function button(label,x,w)
+    local b=Instance.new('TextButton')
+    b.Size=UDim2.new(w,0,0,33)
+    b.Position=UDim2.new(x,0,0,39)
+    b.BackgroundColor3=Color3.fromRGB(67,60,125)
+    b.TextColor3=Color3.new(1,1,1)
+    b.TextScaled=true
+    b.Font=Enum.Font.GothamBold
+    b.Text=label
+    b.Parent=panel
+    Instance.new('UICorner',b).CornerRadius=UDim.new(0,6)
     return b
 end
-local recBtn = makeButton('STOP',.025,.21)
-local copyBtn = makeButton('SALIN',.255,.21)
-local previewBtn = makeButton('HASIL',.485,.21)
-local closeBtn = makeButton('TUTUP',.715,.255)
-
-local status = Instance.new('TextLabel')
-status.Text='Merekam otomatis. Buka kategori inventory satu per satu.'
-status.Font=Enum.Font.Code
-status.TextSize=11
-status.TextColor3=Color3.fromRGB(111,231,170)
+local stopBtn=button('STOP',.018,.175)
+local copyBtn=button('SALIN',.211,.175)
+local jsonBtn=button('JSON',.405,.175)
+local viewBtn=button('HASIL',.599,.175)
+local closeBtn=button('TUTUP',.793,.188)
+local status=Instance.new('TextLabel')
 status.BackgroundTransparency=1
 status.TextXAlignment=Enum.TextXAlignment.Left
 status.TextTruncate=Enum.TextTruncate.AtEnd
-status.Position=UDim2.new(.025,0,0,81)
-status.Size=UDim2.new(.95,0,0,23)
+status.Position=UDim2.new(.018,0,0,82)
+status.Size=UDim2.new(.96,0,0,23)
+status.TextSize=11
+status.Font=Enum.Font.Code
+status.TextColor3=Color3.fromRGB(117,230,176)
+status.Text='REC ON | buka 8 tab lalu STOP + SALIN'
 status.Parent=panel
+local box=Instance.new('ScrollingFrame')
+box.BackgroundColor3=Color3.fromRGB(21,29,49)
+box.BorderSizePixel=0
+box.ScrollBarThickness=5
+box.AutomaticCanvasSize=Enum.AutomaticSize.Y
+box.Position=UDim2.new(.018,0,0,111)
+box.Size=UDim2.new(.964,0,1,-120)
+box.Visible=false
+box.Parent=panel
+local display=Instance.new('TextLabel')
+display.BackgroundTransparency=1
+display.Font=Enum.Font.Code
+display.TextSize=11
+display.TextColor3=Color3.fromRGB(229,236,255)
+display.TextXAlignment=Enum.TextXAlignment.Left
+display.TextYAlignment=Enum.TextYAlignment.Top
+display.TextWrapped=true
+display.AutomaticSize=Enum.AutomaticSize.Y
+display.Size=UDim2.new(1,-15,0,0)
+display.Position=UDim2.new(0,7,0,5)
+display.Text=''
+display.Parent=box
 
-local outputFrame = Instance.new('ScrollingFrame')
-outputFrame.Position=UDim2.new(.025,0,0,112)
-outputFrame.Size=UDim2.new(.95,0,1,-124)
-outputFrame.BackgroundColor3=Color3.fromRGB(22,30,50)
-outputFrame.ScrollBarThickness=5
-outputFrame.BorderSizePixel=0
-outputFrame.AutomaticCanvasSize=Enum.AutomaticSize.Y
-outputFrame.Visible=false
-outputFrame.Parent=panel
-local output = Instance.new('TextLabel')
-output.Text=''
-output.Font=Enum.Font.Code
-output.TextSize=11
-output.TextColor3=Color3.fromRGB(234,239,255)
-output.TextXAlignment=Enum.TextXAlignment.Left
-output.TextYAlignment=Enum.TextYAlignment.Top
-output.TextWrapped=true
-output.BackgroundTransparency=1
-output.AutomaticSize=Enum.AutomaticSize.Y
-output.Size=UDim2.new(1,-15,0,0)
-output.Position=UDim2.new(0,7,0,5)
-output.Parent=outputFrame
-
--- Drag the compact panel on both touch and mouse.
-local UIS=game:GetService('UserInputService')
+-- Keep UI movable on Android.
 local dragging=false
-local dragStart, panelStart, dragInput
-local dragA=title.InputBegan:Connect(function(input)
-    if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-        dragging=true; dragStart=input.Position; panelStart=panel.Position; dragInput=input
+local origin,position,dragInput
+local conn={}
+local function link(s,fn)
+    local ok,c=pcall(function() return s:Connect(fn) end)
+    if ok and c then conn[#conn+1]=c end
+end
+link(title.InputBegan,function(input)
+    if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseButton1 then
+        dragging=true; origin=input.Position; position=panel.Position; dragInput=input
     end
 end)
-local dragB=UIS.InputChanged:Connect(function(input)
+link(UserInputService.InputChanged,function(input)
     if dragging and (input==dragInput or (dragInput and dragInput.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseMovement)) then
-        local delta=input.Position-dragStart
-        panel.Position=UDim2.new(panelStart.X.Scale,panelStart.X.Offset+delta.X,panelStart.Y.Scale,panelStart.Y.Offset+delta.Y)
+        local d=input.Position-origin
+        panel.Position=UDim2.new(position.X.Scale,position.X.Offset+d.X,position.Y.Scale,position.Y.Offset+d.Y)
     end
 end)
-local dragC=UIS.InputEnded:Connect(function(input)
+link(UserInputService.InputEnded,function(input)
     if dragging and (input==dragInput or input.UserInputType==Enum.UserInputType.MouseButton1) then dragging=false end
 end)
 
-local CATEGORY_NAMES = {'Fish','Rods','Baits','Items','Charms','Emotes','Abilities','Pets'}
-local MAP_PAGE = {Inventory2='Fish/Items',Rods2='Rods',Baits='Baits',Charms='Charms',Emotes='Emotes',Abilities='Abilities',Pets='Pets'}
-local state = {
-    running=true, closed=false, expanded=false, started=os.clock(),
-    events=0, dropped=0, watchCount=0, recordCount=0,
-    activePage='?', lastStatus=0, lastSnap=0,
-    seenPages={}, categoryStats={}, samples={}, sampleSeen={}, firstItemPath={}, firstTileKeys={},
-    lines={}, roots={}, connections={}, watched=setmetatable({}, {__mode='k'}),
-    lastLog={}, root=nil, lastReport=''
-}
-for _,cat in ipairs(CATEGORY_NAMES) do
-    state.categoryStats[cat]={events=0,samples=0,changes=0}
-    state.samples[cat]={}
-    state.sampleSeen[cat]={}
+local CATS={'Fish','Rods','Baits','Items','Charms','Emotes','Abilities','Pets'}
+local names={}
+for _,c in ipairs(CATS) do names[c:lower()]=c end
+local pages={Inventory2='Fish/Items',Rods2='Rods',Baits='Baits',Charms='Charms',Abilities='Abilities',Pets='Pets',Emotes='Emotes'}
+local data={}
+for _,c in ipairs(CATS) do data[c]={visits=0,shots=0,tiles=0,labels=0,samples={},sampleSet={},attr={},counters={},page='',qtyLabels=0,firstPath='',source=''} end
+local extra={visits=0,shots=0,tiles=0,labels=0,samples={},sampleSet={},attr={},counters={},page='',qtyLabels=0,firstPath='',source=''}
+data['Fish/Items']=extra
+local state={started=os.clock(),running=true,closed=false,expanded=false,selected=nil,selectedAt=0,root=nil,
+            scans=0,events={},eventDropped=0,rawPairs={},rawSet={},busy=false,lastScan=0,
+            seenTab={},boundButtons=setmetatable({}, {__mode='k'}),boundPages=setmetatable({}, {__mode='k'}),
+            roots=setmetatable({}, {__mode='k'}),report='',json=''}
+local function log(s)
+    local line=string.format('[%03ds] %s',math.floor(os.clock()-state.started),s)
+    state.events[#state.events+1]=line
+    if #state.events>100 then table.remove(state.events,1);state.eventDropped=state.eventDropped+1 end
 end
-state.categoryStats['Fish/Items']={events=0,samples=0,changes=0}
-state.categoryStats['Unknown']={events=0,samples=0,changes=0}
-
-local function clean(value, maxLen)
-    local text = tostring(value or '')
-    text = text:gsub('[\r\n\t]',' '):gsub('%s+',' ')
-    text = text:gsub('^%s+',''):gsub('%s+$','')
-    local limit=maxLen or 80
-    if #text>limit then text=text:sub(1,limit)..'...' end
-    return text
+local function clean(v,maxlen)
+    local s=tostring(v or '')
+    s=s:gsub('<[^>]*>',''):gsub('[\r\n\t]',' '):gsub('%s+',' '):gsub('^%s+',''):gsub('%s+$','')
+    if #s>(maxlen or 110) then s=s:sub(1,maxlen or 110)..'...' end
+    return s
 end
-local function keepLine(s)
-    state.events=state.events+1
-    state.lines[#state.lines+1]=string.format('[%03ds] %s',math.floor(os.clock()-state.started),s)
-    if #state.lines>580 then
-        table.remove(state.lines,1)
-        state.dropped=state.dropped+1
-    end
-end
-local function pathOf(node)
+local function pathOf(n)
     local parts={}
-    local n=node
-    local limit=0
-    while n and n~=pg and limit<15 do
+    local step=0
+    while n and n~=pg and step<15 do
         table.insert(parts,1,n.Name)
         n=n.Parent
-        limit=limit+1
+        step=step+1
     end
     return table.concat(parts,'/')
 end
-local function catOf(node)
-    local n=node
-    for _=1,20 do
-        if not n or n==pg then break end
-        if n.Parent and n.Parent.Name=='Pages' then
-            return MAP_PAGE[n.Name] or n.Name
-        end
-        n=n.Parent
-    end
-    return 'Unknown'
+local function isText(n)
+    return n:IsA('TextLabel') or n:IsA('TextButton') or n:IsA('TextBox')
 end
-local function isPresent(node)
-    local n=node
+local function isVisible(n)
     while n and n~=pg do
-        if n:IsA('ScreenGui') and not n.Enabled then return false end
         if n:IsA('GuiObject') and not n.Visible then return false end
+        if n:IsA('ScreenGui') and not n.Enabled then return false end
         n=n.Parent
     end
     return n==pg
 end
-local function relevantText(node,s)
-    if s=='' then return false end
-    if node.Name=='ItemName' or node.Name=='Weight' or node.Name=='Quantity' or node.Name=='Count' then return true end
-    if s:match('^%s*[%d,.]+%s*/%s*[%d,.]+%s*$') then return true end
-    local lowered=s:lower()
-    if #s<35 and (lowered=='fish' or lowered=='rods' or lowered=='baits' or lowered=='items' or lowered=='charms' or lowered=='emotes' or lowered=='abilities' or lowered=='pets') then return true end
-    return false
+local function inventoryRoot()
+    local inv=pg:FindFirstChild('Inventory')
+    if inv and inv:IsA('ScreenGui') then return inv end
+    return nil
 end
-local function observeSample(category,name)
-    local sample=state.samples[category] or state.samples.Unknown
-    local seen=state.sampleSeen[category] or state.sampleSeen.Unknown
-    name=clean(name,70)
-    if name=='' or seen[name] then return end
-    if #sample<8 then
-        sample[#sample+1]=name
-        seen[name]=true
-        local entry=state.categoryStats[category] or state.categoryStats.Unknown
-        entry.samples=entry.samples+1
+local function findPages(inv)
+    local n=inv and inv:FindFirstChild('Main')
+    n=n and n:FindFirstChild('Content')
+    return n and n:FindFirstChild('Pages')
+end
+local function categoryFromOption(n)
+    local p=n
+    for _=1,10 do
+        if not p then break end
+        if p.Parent and p.Parent.Name=='Options' then return names[p.Name:lower()] end
+        p=p.Parent
     end
+    return nil
 end
-local function logChange(category,kind,message,interval)
-    local stats=state.categoryStats[category] or state.categoryStats.Unknown
-    stats.events=stats.events+1
-    if kind=='TEXT' or kind=='ATTR' then stats.changes=stats.changes+1 end
-    local k=kind..'|'..message
-    local now=os.clock()
-    local gap=interval or 1
-    if state.lastLog[k] and now-state.lastLog[k]<gap then return end
-    state.lastLog[k]=now
-    keepLine(kind..' '..category..' '..message)
-end
-local function refreshStatus(force)
-    local now=os.clock()
-    if not force and now-state.lastStatus<1 then return end
-    state.lastStatus=now
-    local secs=math.floor(now-state.started)
-    status.Text=string.format('%s | %ds | %d events | %d watchers | page %s',state.running and 'REC ON' or 'STOPPED',secs,state.events,state.watchCount,state.activePage)
-end
-local function connected(signal,callback)
-    local ok,c=pcall(function() return signal:Connect(callback) end)
-    if ok and c then state.connections[#state.connections+1]=c end
-end
-
-local function visiblePages()
-    local root=pg:FindFirstChild('Inventory')
-    if not root then return nil,{} end
-    local main=root:FindFirstChild('Main')
-    local content=main and main:FindFirstChild('Content')
-    local pages=content and content:FindFirstChild('Pages')
-    if not pages then return root,{} end
-    local shown={}
-    for _,node in ipairs(pages:GetChildren()) do
-        if node:IsA('GuiObject') and node.Visible and isPresent(node) then
-            shown[#shown+1]=node
-        end
-    end
-    return root,shown
-end
-
-local function snapshot(reason)
-    if not state.running then return end
-    local root, shown=visiblePages()
-    if not root then
-        if not state.roots.missing then
-            state.roots.missing=true
-            keepLine('WAIT PlayerGui.Inventory belum ada. Buka menu Inventory.')
-        end
-        refreshStatus(true)
-        return
-    end
-    state.root=root
-    if not state.roots.present then
-        state.roots.present=true
-        keepLine('ROOT PlayerGui/'..root.Name..' ['..root.ClassName..']')
-    end
-    local cats={}
-    for _,page in ipairs(shown) do
-        cats[#cats+1]=MAP_PAGE[page.Name] or page.Name
-        if not state.seenPages[page.Name] then
-            state.seenPages[page.Name]=true
-            keepLine('PAGE FIRST VISIBLE: '..pathOf(page)..' -> '..cats[#cats])
-        end
-        local details=page:GetDescendants()
-        local tiles, itemLabels, counterLabels=0,0,0
-        for i,obj in ipairs(details) do
-            if i>6500 then break end
-            if obj.Name=='Tile' and obj:IsA('GuiObject') then
-                tiles=tiles+1
-                if not state.firstTileKeys[page.Name] and tiles<=25 then
-                    local keys={}
-                    local ok,attrs=pcall(function() return obj:GetAttributes() end)
-                    if ok and attrs then
-                        for k,_ in pairs(attrs) do
-                            if #keys<12 then keys[#keys+1]=clean(k,40) end
-                        end
-                    end
-                    if #keys>0 then
-                        table.sort(keys)
-                        state.firstTileKeys[page.Name]='PlayerGui/'..pathOf(obj)..' : '..table.concat(keys,',')
-                    end
-                end
+local function categoryFromPage(n)
+    local p=n
+    for _=1,16 do
+        if not p then break end
+        if p.Parent and p.Parent.Name=='Pages' then
+            local c=pages[p.Name]
+            if c=='Fish/Items' then
+                -- The shared page cannot identify Fish versus Items by itself.
+                -- A top-tab path or named text is required to attribute its counter.
+                return 'Fish/Items'
             end
-            if obj:IsA('TextLabel') or obj:IsA('TextButton') then
-                local text=clean(obj.Text,80)
-                if obj.Name=='ItemName' and text~='' then
-                    if not state.firstItemPath[page.Name] then state.firstItemPath[page.Name]='PlayerGui/'..pathOf(obj) end
-                    itemLabels=itemLabels+1
-                    observeSample(catOf(obj),text)
-                end
-                if text:match('^%s*[%d,.]+%s*/%s*[%d,.]+%s*$') then
-                    counterLabels=counterLabels+1
-                    if counterLabels<=6 then logChange(catOf(obj),'COUNTER',pathOf(obj)..' = '..text,4) end
-                end
-            end
+            return c
         end
-        keepLine('SNAP '..reason..' '..page.Name..' tiles='..tiles..' itemLabels='..itemLabels..' pairCounters='..counterLabels)
+        p=p.Parent
     end
-    local label=(#cats>0) and table.concat(cats,',') or '(no visible page)'
-    if state.activePage~=label then
-        keepLine('ACTIVE PAGE => '..label)
-        state.activePage=label
-    end
-    refreshStatus(true)
+    return nil
 end
-
-local function isImportantPageNode(node)
-    -- Avoid thousands of callbacks from individual tiles, which can freeze Android.
-    if node.Parent and node.Parent.Name=='Pages' then return true end
-    if node.Name=='Inventory' and node:IsA('ScrollingFrame') then return true end
-    return false
-end
-local function isInterestingContainer(node)
-    if isImportantPageNode(node) then return true end
-    return node.Name=='Tile' and node:IsA('GuiObject')
-end
-local function attachGuiNode(node)
-    if not state.running or state.watched[node] or state.watchCount>=9000 then return end
-    state.watched[node]=true
-    state.watchCount=state.watchCount+1
-    if node:IsA('TextLabel') or node:IsA('TextButton') then
-        connected(node:GetPropertyChangedSignal('Text'),function()
-            if not state.running then return end
-            local t=clean(node.Text,100)
-            if not relevantText(node,t) then return end
-            local cat=catOf(node)
-            if node.Name=='ItemName' then observeSample(cat,t) end
-            if node.Name=='ItemName' then
-                local stat=state.categoryStats[cat] or state.categoryStats.Unknown
-                if stat.changes>30 then stat.events=stat.events+1; return end
-            end
-            logChange(cat,'TEXT',pathOf(node)..' = '..t,0.1)
-            refreshStatus(false)
-        end)
-    end
-    if node:IsA('GuiObject') and isImportantPageNode(node) then
-        connected(node:GetPropertyChangedSignal('Visible'),function()
-            if not state.running then return end
-            logChange(catOf(node),'VISIBLE',pathOf(node)..' = '..tostring(node.Visible),0.1)
-            task.delay(.25,function()
-                if state.running then snapshot('visibility') end
-            end)
-        end)
-    end
-    -- Observe category tab presses even when the game reuses a single page.
-    -- This only listens to UI events; it never triggers a click itself.
-    if node:IsA('GuiButton') and node.Name~='Tile' then
-        local lower=node.Name:lower()
-        if lower:find('tab',1,true) or lower:find('categor',1,true)
-            or lower:find('fish',1,true) or lower:find('rod',1,true)
-            or lower:find('bait',1,true) or lower:find('item',1,true)
-            or lower:find('charm',1,true) or lower:find('emote',1,true)
-            or lower:find('abilit',1,true) or lower:find('pet',1,true) then
-            connected(node.Activated,function()
-                if not state.running then return end
-                logChange(catOf(node),'TAB-CLICK',pathOf(node),.2)
-                task.delay(.35,function() if state.running then snapshot('tab-click') end end)
-            end)
-        end
-    end
-    if node:IsA('ScrollingFrame') then
-        local lastScroll=0
-        connected(node:GetPropertyChangedSignal('CanvasPosition'),function()
-            if not state.running then return end
-            local now=os.clock()
-            if now-lastScroll<1.6 then return end
-            lastScroll=now
-            logChange(catOf(node),'SCROLL',pathOf(node)..' Y='..math.floor(node.CanvasPosition.Y),1.5)
-        end)
-    end
-    if node.Name=='Tile' and node:IsA('GuiObject') then
-        -- Only record attribute NAMES and types; never dump UUID or hidden payloads.
-        connected(node.AttributeChanged,function(attribute)
-            if not state.running then return end
-            if attribute:match('^[%w_]+$') and #attribute<=45 then
-                logChange(catOf(node),'ATTR',pathOf(node)..' key='..attribute,2)
-            end
-        end)
+local function addSample(r,value)
+    value=clean(value,75)
+    if value=='' or value=='ItemName' or r.sampleSet[value] then return end
+    if #r.samples<7 then
+        r.samples[#r.samples+1]=value
+        r.sampleSet[value]=true
     end
 end
-
-local attaching=false
-local function bindInventoryRoot(root)
-    if not state.running or attaching or not root or state.roots.bound==root then return end
-    attaching=true
-    state.roots.bound=root
-    if root:IsA('ScreenGui') then
-        connected(root:GetPropertyChangedSignal('Enabled'),function()
-            if state.running then
-                logChange('Unknown','ROOT','Inventory Enabled='..tostring(root.Enabled),0.2)
-                task.delay(.3,function() if state.running then snapshot('root enabled') end end)
-            end
-        end)
-    end
-    connected(root.DescendantAdded,function(node)
-        if not state.running then return end
-        attachGuiNode(node)
-        local category=catOf(node)
-        if isInterestingContainer(node) then
-            logChange(category,'ADD',pathOf(node)..' ['..node.ClassName..']',.1)
-        elseif node.Name=='ItemName' and (node:IsA('TextLabel') or node:IsA('TextButton')) then
-            local value=clean(node.Text,70)
-            if value~='' then observeSample(category,value) end
-            local stats=state.categoryStats[category] or state.categoryStats.Unknown
-            if stats.events<45 then logChange(category,'ITEM',pathOf(node)..' = '..value,.1) end
-        end
-        refreshStatus(false)
-    end)
-    connected(root.DescendantRemoving,function(node)
-        if not state.running then return end
-        if isInterestingContainer(node) then
-            logChange(catOf(node),'REMOVE',pathOf(node),.1)
-        end
-    end)
-    task.spawn(function()
-        attachGuiNode(root)
-        local all=root:GetDescendants()
-        keepLine('WATCH GUI objects='..#all..' (max watcher 9000)')
-        for i,obj in ipairs(all) do
-            if not state.running then break end
-            attachGuiNode(obj)
-            if i%260==0 then task.wait() end
-        end
-        attaching=false
-        if state.running then snapshot('start') end
-    end)
+local function parsePair(txt)
+    -- Accept 886/4,500, 1.126 / 400 and 'Fish: 886 / 4500'.
+    -- Never treat ratio 1/40M as an inventory count.
+    local a,b=txt:match('(%d[%d,.]*)%s*/%s*(%d[%d,.]*)')
+    if not a then return nil end
+    if txt:match('%d[%d,.]*%s*/%s*%d[%d,.]*%s*[MmKkBb]') then return nil end
+    local va=tonumber((a:gsub('[,.]','')))
+    local vb=tonumber((b:gsub('[,.]','')))
+    if not va or not vb then return nil end
+    if va>100000000 or vb>100000000 or vb==0 then return nil end
+    return va,vb
 end
-
-local function findLocalStoragePaths()
-    local found={}
-    local names=''
+local function keepCounter(category,record)
+    if not category or not data[category] then return end
+    local r=data[category]
+    -- Same source path can change as the player keeps fishing; update the latest reading.
+    for _,old in ipairs(r.counters) do
+        if old.path==record.path then
+            old.current=record.current;old.capacity=record.capacity
+            old.text=record.text;old.time=record.time;old.evidence=record.evidence
+            return
+        end
+    end
+    if #r.counters<12 then r.counters[#r.counters+1]=record end
+end
+local function inspectCounters(inv,category,reason)
+    local objs=inv:GetDescendants()
+    local inspected=0
     local count=0
-    for _,child in ipairs(player:GetChildren()) do
-        if child~=pg and child.Name~='Backpack' and child.Name~='PlayerScripts' and child.Name~='Character' then
-            count=count+1
-            if count<=32 then
-                found[#found+1]='Player/'..clean(child.Name,45)..' ['..child.ClassName..']'
-                if child:IsA('Folder') or child:IsA('Configuration') then
-                    local descendants=child:GetDescendants()
-                    found[#found+1]='  descendants='..#descendants
-                    local shown=0
-                    for _,sub in ipairs(descendants) do
-                        if sub:IsA('ValueBase') and shown<9 then
-                            shown=shown+1
-                            found[#found+1]='  '..clean(sub.Name,45)..' ['..sub.ClassName..'] (value hidden)'
-                        end
+    for _,n in ipairs(objs) do
+        inspected=inspected+1
+        if inspected>12500 then break end
+        if isText(n) then
+            local t=clean(n.Text,115)
+            local current,capacity=parsePair(t)
+            if current then
+                count=count+1
+                local inTab=categoryFromOption(n)
+                local inPage=categoryFromPage(n)
+                local named=nil
+                for _,cat in ipairs(CATS) do
+                    if t:lower():match('^'..cat:lower()..'%f[%A]') then named=cat;break end
+                end
+                local owner=inTab or named or inPage
+                -- Fish and Items share Inventory2; only tab evidence can distinguish them.
+                local proof='page'
+                if inTab then proof='tab'
+                elseif named then proof='named_label'
+                elseif inPage then proof='page' end
+                local visible=isVisible(n)
+                if visible and owner and data[owner] then
+                    keepCounter(owner,{current=current,capacity=capacity,text=t,path='PlayerGui/'..pathOf(n),
+                                       evidence=proof,time=math.floor(os.clock()-state.started)})
+                end
+                local key=pathOf(n)..'|'..t
+                if not state.rawSet[key] and #state.rawPairs<30 then
+                    state.rawSet[key]=true
+                    state.rawPairs[#state.rawPairs+1]={category=owner or '?',proof=proof,
+                         path='PlayerGui/'..pathOf(n),text=t,visible=visible}
+                end
+            end
+        end
+        if inspected%2600==0 then task.wait() end
+    end
+    return count,inspected
+end
+local function descendantVariant(n,tile)
+    local p=n.Parent
+    while p and p~=tile do
+        if p.Name=='Variant' then return true end
+        p=p.Parent
+    end
+    return false
+end
+local function inspectPage(page,cat)
+    local r=data[cat] or extra
+    r.visits=math.max(r.visits,1)
+    r.shots=r.shots+1
+    r.page=page.Name
+    local descendants=page:GetDescendants()
+    local tiles,labels,quantities=0,0,0
+    local perPageNames={}
+    local seenTile=setmetatable({}, {__mode='k'})
+    for i,n in ipairs(descendants) do
+        if i>7000 then break end
+        if n.Name=='Tile' and n:IsA('GuiObject') then
+            tiles=tiles+1
+            if tiles<30 then
+                local ok,attrs=pcall(function() return n:GetAttributes() end)
+                if ok and attrs then
+                    for k,v in pairs(attrs) do
+                        local label=clean(k,35)..' ('..type(v)..')'
+                        r.attr[label]=true
                     end
+                end
+            end
+        elseif n.Name=='ItemName' and isText(n) then
+            local txt=clean(n.Text,80)
+            local p=n.Parent
+            local tile=nil
+            for _=1,10 do
+                if not p or p==page then break end
+                if p.Name=='Tile' then tile=p;break end
+                p=p.Parent
+            end
+            if txt~='' and txt~='ItemName' and not descendantVariant(n,tile or page) then
+                labels=labels+1
+                addSample(r,txt)
+                if r.firstPath=='' then r.firstPath='PlayerGui/'..pathOf(n) end
+                if tile then seenTile[tile]=true end
+            end
+        elseif (n.Name=='Quantity' or n.Name=='Count') and isText(n) then
+            local txt=clean(n.Text,50)
+            if txt~='' then
+                quantities=quantities+1
+                if quantities<=4 and n.Parent then
+                    local parentName=clean(n.Parent.Name,35)
+                    if parentName~='Tile' then addSample(r,parentName..' ('..txt..')') end
                 end
             end
         end
     end
-    return found
+    r.tiles=math.max(tiles,r.tiles)
+    r.labels=math.max(labels,r.labels)
+    r.qtyLabels=math.max(quantities,r.qtyLabels)
+    return tiles,labels,quantities
 end
-local function relatedModulePaths()
-    local out={}
-    local inventory=ReplicatedStorage:FindFirstChild('Controllers')
-    local controller=inventory and inventory:FindFirstChild('InventoryController')
-    if controller then
-        out[#out+1]='ReplicatedStorage/Controllers/InventoryController ['..controller.ClassName..']'
-        for _,child in ipairs(controller:GetChildren()) do
-            if #out>=16 then break end
-            out[#out+1]='  '..clean(child.Name,65)..' ['..child.ClassName..']'
+local function activePage(inv)
+    local root=findPages(inv)
+    if not root then return nil end
+    for _,page in ipairs(root:GetChildren()) do
+        if page:IsA('GuiObject') and isVisible(page) then return page end
+    end
+    return nil
+end
+local function snapshot(reason)
+    if not state.running or state.busy then return end
+    local now=os.clock()
+    if now-state.lastScan<.32 then return end
+    state.lastScan=now
+    state.busy=true
+    local ok,err=pcall(function()
+        local inv=inventoryRoot()
+        if not inv or not inv.Enabled then
+            log('SNAP '..reason..' | inventory closed/not mounted')
+            return
+        end
+        local page=activePage(inv)
+        local cat=state.selected
+        if page then
+            local mapped=pages[page.Name]
+            if mapped=='Fish/Items' then
+                if cat~='Fish' and cat~='Items' then cat='Fish/Items' end
+            elseif mapped then cat=mapped end
+        end
+        if not cat then cat='Fish/Items' end
+        local r=data[cat] or extra
+        r.visits=math.max(r.visits,1)
+        local tiles,labels,quantities=0,0,0
+        if page then tiles,labels,quantities=inspectPage(page,cat) end
+        local counters,visited=inspectCounters(inv,cat,reason)
+        state.scans=state.scans+1
+        log('SNAP '..reason..' tab='..cat..' page='..(page and page.Name or '?')..
+            ' GUItiles='..tiles..' names='..labels..' quantityLabels='..quantities..
+            ' pairsInRoot='..counters..' inspected='..visited)
+        status.Text='REC ON | '..state.scans..' captures | tab '..cat
+    end)
+    state.busy=false
+    if not ok then log('SNAP ERROR '..clean(err,125)) end
+end
+local function scheduleSnapshot(label)
+    task.delay(.38,function() if state.running then snapshot(label..'+380ms') end end)
+    task.delay(1.20,function() if state.running then snapshot(label..'+1200ms') end end)
+end
+local function chooseCategory(cat,from)
+    if not data[cat] then return end
+    local elapsed=os.clock()-state.selectedAt
+    if state.selected==cat and elapsed<.18 then return end
+    state.selected=cat
+    state.selectedAt=os.clock()
+    data[cat].visits=data[cat].visits+1
+    state.seenTab[cat]=true
+    log('TAB '..cat..' via '..from)
+    scheduleSnapshot('tab '..cat)
+end
+local function attachOptionButtons(inv)
+    local main=inv:FindFirstChild('Main')
+    local top=main and main:FindFirstChild('Top')
+    local options=top and top:FindFirstChild('Options')
+    if not options then return end
+    -- Listen to a tab's own GuiButton and to nested buttons, without sending clicks.
+    for _,obj in ipairs(options:GetDescendants()) do
+        if obj:IsA('GuiButton') and not state.boundButtons[obj] then
+            local cat=categoryFromOption(obj)
+            if cat then
+                state.boundButtons[obj]=true
+                link(obj.Activated,function() if state.running then chooseCategory(cat,'Options/'..obj.Name) end end)
+            end
         end
     end
-    local shared=ReplicatedStorage:FindFirstChild('Shared')
-    local mapping=shared and shared:FindFirstChild('InventoryMapping')
-    if mapping then out[#out+1]='ReplicatedStorage/Shared/InventoryMapping ['..mapping.ClassName..']' end
-    return out
+    for _,obj in ipairs(options:GetChildren()) do
+        if obj:IsA('GuiButton') and not state.boundButtons[obj] then
+            local cat=names[obj.Name:lower()]
+            if cat then
+                state.boundButtons[obj]=true
+                link(obj.Activated,function() if state.running then chooseCategory(cat,'Options') end end)
+            end
+        end
+    end
+end
+local function attachPages(inv)
+    local root=findPages(inv)
+    if not root then return end
+    for _,p in ipairs(root:GetChildren()) do
+        if p:IsA('GuiObject') and not state.boundPages[p] then
+            state.boundPages[p]=true
+            link(p:GetPropertyChangedSignal('Visible'),function()
+                if not state.running or not p.Visible then return end
+                local mapped=pages[p.Name]
+                if mapped and mapped~='Fish/Items' and state.selected~=mapped then
+                    -- Non-shared pages can identify the category even if a click was missed.
+                    chooseCategory(mapped,'visible page')
+                else
+                    scheduleSnapshot('visible '..p.Name)
+                end
+            end)
+        end
+    end
+end
+local function bindRoot(inv)
+    if state.roots[inv] then return end
+    state.roots[inv]=true
+    state.root=inv
+    attachOptionButtons(inv)
+    attachPages(inv)
+    link(inv:GetPropertyChangedSignal('Enabled'),function()
+        if state.running then
+            log('GUI Enabled='..tostring(inv.Enabled))
+            if inv.Enabled then scheduleSnapshot('open') end
+        end
+    end)
+    link(inv.DescendantAdded,function(n)
+        if not state.running then return end
+        if n.Parent and (n.Parent.Name=='Options' or n.Parent.Name=='Pages') then
+            task.defer(function()
+                if state.running then attachOptionButtons(inv);attachPages(inv) end
+            end)
+        end
+    end)
+    log('BOUND PlayerGui/Inventory + Main/Top/Options + Pages')
+    scheduleSnapshot('initial')
+end
+local function statValue(n)
+    local ls=player:FindFirstChild('leaderstats')
+    local v=ls and ls:FindFirstChild(n)
+    if v and v:IsA('ValueBase') then return tostring(v.Value) end
+    return '?'
+end
+local function reportData()
+    local result={
+        version='13',source='Roblox client GUI (not authoritative server storage)',
+        username=player.Name,userId=player.UserId,placeId=game.PlaceId,
+        capturedAt=os.time(),captureDurationSeconds=math.floor(os.clock()-state.started),
+        categoryResults={},unassignedCounterEvidence={},
+        warnings={'GUI tile totals and sample names are not full item ownership counts.',
+                  'Fish and Items share Inventory2, and must be separated by tab click.',
+                  'UI counters are snapshots at observation time; no automatic upload.'}
+    }
+    for _,cat in ipairs(CATS) do
+        local r=data[cat]
+        result.categoryResults[cat]={tabSeen=(state.seenTab[cat] or false),page=r.page,
+            maxGuiTilesSeen=r.tiles,maxNameLabelsSeen=r.labels,quantityLabelsSeen=r.qtyLabels,
+            sampleNames=r.samples,exampleNamePath=r.firstPath,attributeNames={},counterEvidence=r.counters}
+        for key,_ in pairs(r.attr) do result.categoryResults[cat].attributeNames[#result.categoryResults[cat].attributeNames+1]=key end
+        table.sort(result.categoryResults[cat].attributeNames)
+    end
+    for _,record in ipairs(state.rawPairs) do
+        result.unassignedCounterEvidence[#result.unassignedCounterEvidence+1]=record
+    end
+    return result
 end
 local function makeReport()
-    local report={}
-    report[#report+1]='KIMS INVENTORY AUTO CAPTURE V12 | READ ONLY | NO UPLOAD'
-    report[#report+1]='USER @'..player.Name..' | UserId='..tostring(player.UserId)
-    report[#report+1]='PlaceId='..tostring(game.PlaceId)
-    report[#report+1]='Duration='..math.floor(os.clock()-state.started)..'s | status='..(state.running and 'RECORDING' or 'STOPPED')
-    report[#report+1]='GUI watchers='..state.watchCount..' | events='..state.events..' | old events discarded='..state.dropped
-    report[#report+1]='Last active page='..state.activePage
-    report[#report+1]='\n=== CATEGORY ACTIVITY (NOT OWNED ITEM COUNTS) ==='
-    for _,cat in ipairs({'Fish/Items','Rods','Baits','Charms','Emotes','Abilities','Pets','Fish','Items','Unknown'}) do
-        local data=state.categoryStats[cat]
-        report[#report+1]=cat..': observed events='..(data and data.events or 0)..', text/attr changes='..(data and data.changes or 0)
-        local samples=state.samples[cat]
-        if samples and #samples>0 then report[#report+1]='  sample labels: '..table.concat(samples,' ; ') end
+    local out={
+        'KIMS INVENTORY AUTO READER V13 | READ ONLY | NO UPLOAD',
+        'USER @'..player.Name..' | UserId='..tostring(player.UserId),
+        'PlaceId='..tostring(game.PlaceId)..' | duration='..math.floor(os.clock()-state.started)..'s',
+        'Capture='..state.scans..' | status='..(state.running and 'RECORDING' or 'STOPPED'),
+        'Caught LIFETIME='..statValue('Caught')..' | Rarest Fish='..statValue('Rarest Fish'),
+        '', '=== 8 CATEGORIES | CURRENT GUI SNAPSHOTS ==='
+    }
+    for _,cat in ipairs(CATS) do
+        local r=data[cat]
+        out[#out+1]='\n['..cat..'] tab clicked='..tostring(state.seenTab[cat] or false)..
+            ' | page='..(r.page~='' and r.page or '?')..' | captures='..r.shots
+        out[#out+1]='  GUI tiles max='..r.tiles..' | name labels max='..r.labels..' | quantity labels max='..r.qtyLabels
+        if #r.samples>0 then out[#out+1]='  examples: '..table.concat(r.samples,' ; ') end
+        if r.firstPath~='' then out[#out+1]='  first name path: '..r.firstPath end
+        local attr={}
+        for k,_ in pairs(r.attr) do attr[#attr+1]=k end
+        table.sort(attr)
+        if #attr>0 then out[#out+1]='  tile attribute keys/types: '..table.concat(attr,', ') end
+        if #r.counters==0 then
+            out[#out+1]='  counter: belum terdeteksi (BUKAN nol)'
+        else
+            for i,e in ipairs(r.counters) do
+                if i>6 then break end
+                out[#out+1]='  pair '..i..': '..e.current..' / '..e.capacity..' ['..e.evidence..' at '..e.time..'s] '..e.path
+            end
+            out[#out+1]='  WARNING: pair angka tidak otomatis berarti total kepemilikan.'
+        end
     end
-    local seen={}
-    for name,_ in pairs(state.seenPages) do seen[#seen+1]=name end
-    table.sort(seen)
-    report[#report+1]='Pages observed visible: '..(#seen>0 and table.concat(seen,', ') or '(none)')
-    report[#report+1]='\n=== OBSERVED GUI SOURCE PATHS ==='
-    for _,page in ipairs(seen) do
-        report[#report+1]='PAGE '..page
-        report[#report+1]='  first ItemName: '..(state.firstItemPath[page] or '(not found)')
-        report[#report+1]='  tile attribute keys: '..(state.firstTileKeys[page] or '(not found)')
+    if extra.shots>0 then
+        out[#out+1]='\n[Fish/Items UNRESOLVED] captures='..extra.shots..' | tiles='..extra.tiles
+        out[#out+1]='  Sebelum klik Fish/Items, shared page tidak boleh diatribusikan ke salah satu.'
     end
-    report[#report+1]='\n=== LOCAL PLAYER VALUE CONTAINERS (METADATA ONLY) ==='
-    local found=findLocalStoragePaths()
-    for _,s in ipairs(found) do report[#report+1]=s end
-    report[#report+1]='\n=== INVENTORY-RELATED MODULE PATHS (METADATA ONLY) ==='
-    for _,s in ipairs(relatedModulePaths()) do report[#report+1]=s end
-    report[#report+1]='\n=== TIMELINE (MOST RECENT 580 EVENTS) ==='
-    for _,s in ipairs(state.lines) do report[#report+1]=s end
-    report[#report+1]='\nNOTE: GUI events and replicated paths DO NOT prove access to server storage or complete owned inventory.'
-    report[#report+1]='NOTE: No remote hooks, no getgc, no HTTP, no data upload, no inventory modifications.'
-    return table.concat(report,'\n')
+    out[#out+1]='\n=== RAW GUI COUNTER EVIDENCE (max 30) ==='
+    if #state.rawPairs==0 then out[#out+1]='  Tidak ada pasangan angka terbaca dari Inventory root.' end
+    for _,r in ipairs(state.rawPairs) do
+        out[#out+1]='  '..r.category..' ['..r.proof..', visible='..tostring(r.visible)..'] '..r.text..' @ '..r.path
+    end
+    out[#out+1]='\n=== CAPTURE TIMELINE (last 100) ==='
+    for _,line in ipairs(state.events) do out[#out+1]=line end
+    out[#out+1]='\nREAD ONLY. No require/getgc/HTTP/remotes/upload/auto-scroll/inventory modification.'
+    out[#out+1]='Counters are game GUI observations, not proof of a complete item database.'
+    return table.concat(out,'\n')
 end
-
-local function stopRecorder()
+local function updatePreview()
+    state.report=makeReport()
+    local ok,result=pcall(function() return HttpService:JSONEncode(reportData()) end)
+    state.json=ok and result or '{"error":"json encoding failed"}'
+    if state.expanded then display.Text=state.report end
+end
+local function stopRecording()
     if not state.running then return end
-    -- Capture the current page before disconnecting.
     snapshot('stop')
     state.running=false
-    keepLine('STOP pressed. Monitoring disconnected.')
-    for _,c in ipairs(state.connections) do pcall(function() c:Disconnect() end) end
-    state.connections={}
-    recBtn.Text='SELESAI'
-    recBtn.BackgroundColor3=Color3.fromRGB(44,105,80)
-    status.Text='STOPPED. Tekan SALIN lalu kirim hasilnya.'
-    state.lastReport=makeReport()
-    if state.expanded then output.Text=state.lastReport end
+    log('STOP pressed. Capture frozen.')
+    updatePreview()
+    stopBtn.Text='SELESAI'
+    stopBtn.BackgroundColor3=Color3.fromRGB(48,100,80)
+    status.Text='STOPPED | SALIN laporan atau JSON'
+    for _,c in ipairs(conn) do pcall(function() c:Disconnect() end) end
+    conn={}
 end
-
-local refreshClock=0
-connected(pg.ChildAdded,function(child)
-    if state.running and child.Name=='Inventory' then
-        bindInventoryRoot(child)
-        logChange('Unknown','ROOT','Inventory appeared in PlayerGui',.5)
-    end
-end)
-connected(pg.ChildRemoved,function(child)
-    if state.running and child==state.root then
-        state.roots.bound=nil
-        keepLine('ROOT Inventory removed; waiting for replacement.')
-    end
-end)
-connected(shutdownSignal.Event,stopRecorder)
-
-recBtn.MouseButton1Click:Connect(function()
-    if state.running then stopRecorder() end
-end)
-copyBtn.MouseButton1Click:Connect(function()
-    local textData=state.running and makeReport() or state.lastReport
-    if textData=='' then textData=makeReport() end
+link(signal.Event,stopRecording)
+stopBtn.MouseButton1Click:Connect(stopRecording)
+local function copy(s,b,original)
+    if state.running then updatePreview() end
     local fn=(type(setclipboard)=='function' and setclipboard) or (type(toclipboard)=='function' and toclipboard)
-    if not fn then
-        copyBtn.Text='NO COPY'
-        return
-    end
-    local ok=pcall(fn,textData)
-    copyBtn.Text=ok and 'TERSALIN!' or 'GAGAL'
-    task.delay(2,function()
-        if screen.Parent then copyBtn.Text='SALIN' end
-    end)
+    if not fn then b.Text='NO COPY';return end
+    local ok=pcall(fn,s)
+    b.Text=ok and 'TERSALIN' or 'GAGAL'
+    task.delay(2,function() if b.Parent then b.Text=original end end)
+end
+copyBtn.MouseButton1Click:Connect(function()
+    updatePreview()
+    copy(state.report,copyBtn,'SALIN')
 end)
-previewBtn.MouseButton1Click:Connect(function()
+jsonBtn.MouseButton1Click:Connect(function()
+    updatePreview()
+    copy(state.json,jsonBtn,'JSON')
+end)
+viewBtn.MouseButton1Click:Connect(function()
     state.expanded=not state.expanded
-    outputFrame.Visible=state.expanded
-    panel.Size=state.expanded and UDim2.new(.90,0,.66,0) or UDim2.new(.90,0,0,116)
-    previewBtn.Text=state.expanded and 'CIUT' or 'HASIL'
-    if state.expanded then output.Text=state.running and makeReport() or state.lastReport end
+    box.Visible=state.expanded
+    panel.Size=state.expanded and UDim2.new(.92,0,.67,0) or UDim2.new(.92,0,0,112)
+    viewBtn.Text=state.expanded and 'CIUT' or 'HASIL'
+    if state.expanded then updatePreview() end
 end)
 closeBtn.MouseButton1Click:Connect(function()
-    stopRecorder()
+    stopRecording()
     state.closed=true
-    pcall(function() dragA:Disconnect() end)
-    pcall(function() dragB:Disconnect() end)
-    pcall(function() dragC:Disconnect() end)
     screen:Destroy()
 end)
 
-keepLine('REC auto ON. Buka semua kategori inventory secara manual; jangan klik record lagi.')
-keepLine('Recorder memantau perubahan GUI, bukan isi storage server atau tabel Lua tersembunyi.')
-local root=pg:FindFirstChild('Inventory')
-if root then bindInventoryRoot(root) else snapshot('initial') end
+log('AUTO REC ON. Buka Fish, Rods, Baits, Items, Charms, Emotes, Abilities, Pets.')
+log('TAB-CLICK distinguishes Fish vs Items; page Inventory2 alone cannot.')
+local first=inventoryRoot()
+if first then bindRoot(first) else log('Waiting for PlayerGui.Inventory...') end
+link(pg.ChildAdded,function(n)
+    if state.running and n.Name=='Inventory' then bindRoot(n) end
+end)
 
--- Low-rate fallback for games that reuse the same GUI rather than adding new objects.
+-- Fallback for games that reuse an existing page or create tabs after startup.
+-- No getgc, no scanning 200k memory objects, no heavy per-tile listeners.
 task.spawn(function()
     local lastActive=''
     while state.running and screen.Parent do
-        task.wait(1.5)
+        task.wait(1.75)
         if not state.running then break end
-        local inventory=pg:FindFirstChild('Inventory')
-        if inventory and not state.roots.bound then bindInventoryRoot(inventory) end
-        local _,pages=visiblePages()
-        local names={}
-        for _,page in ipairs(pages) do names[#names+1]=page.Name end
-        local nowActive=table.concat(names,',')..'|'..(inventory and tostring(inventory.Enabled) or 'nil')
-        if nowActive~=lastActive then
-            lastActive=nowActive
-            snapshot('page-change')
+        local inv=inventoryRoot()
+        if inv then
+            if not state.roots[inv] then bindRoot(inv) end
+            attachOptionButtons(inv)
+            attachPages(inv)
+            if inv.Enabled then
+                local page=activePage(inv)
+                local key=(page and page.Name or '?')..'/'..(state.selected or '?')
+                if key~=lastActive then
+                    lastActive=key
+                    snapshot('fallback category/page')
+                end
+            end
         end
-        refreshStatus(false)
     end
 end)
