@@ -1,308 +1,314 @@
--- KIMS TECH | REPLION SOURCE INSPECTOR V17
--- Fish It / Delta | Read-only, bounded, metadata-only inspection.
--- No Zetsu, getgc, HTTP, remote calls, item mutations or payload export.
--- Requires only module paths already loaded in this game session.
+-- KIMS TECH | INVENTORY RECORD INSPECTOR V18
+-- Read-only schema audit of cached InventoryController -> Data.Inventory.
+-- Does NOT read/print item values, request bodies, personal identifiers, credentials.
+-- Does NOT fire remotes, scroll inventory, access getgc or upload anything.
 
-local Players=game:GetService('Players')
-local UIS=game:GetService('UserInputService')
-local plr=Players.LocalPlayer
-if not plr then return end
-local pg=plr:WaitForChild('PlayerGui')
-local old=pg:FindFirstChild('KIMSReplionV17')
-if old then old:Destroy() end
-local screen=Instance.new('ScreenGui')
-screen.Name='KIMSReplionV17'; screen.ResetOnSpawn=false
-screen.DisplayOrder=999; screen.Parent=pg
-local pane=Instance.new('Frame')
-pane.Size=UDim2.new(.94,0,.68,0); pane.Position=UDim2.new(.03,0,.15,0)
-pane.BackgroundColor3=Color3.fromRGB(13,19,36); pane.BorderSizePixel=0
-pane.Active=true; pane.Parent=screen
-Instance.new('UICorner',pane).CornerRadius=UDim.new(0,10)
-local border=Instance.new('UIStroke',pane); border.Thickness=2
-border.Color=Color3.fromRGB(107,91,224)
-local headline=Instance.new('TextLabel',pane)
-headline.Position=UDim2.new(.025,0,0,6); headline.Size=UDim2.new(.95,0,0,30)
-headline.BackgroundTransparency=1; headline.Font=Enum.Font.GothamBold
-headline.TextSize=14; headline.TextXAlignment=Enum.TextXAlignment.Left
-headline.TextColor3=Color3.fromRGB(205,190,255)
-headline.Text='KIMS V17 | REPLION SOURCE INSPECTOR'
-local function btn(txt,x,w)
- local b=Instance.new('TextButton',pane)
- b.Position=UDim2.new(x,0,0,43); b.Size=UDim2.new(w,0,0,33)
- b.Text=txt; b.TextScaled=true; b.Font=Enum.Font.GothamBold
- b.TextColor3=Color3.new(1,1,1); b.BackgroundColor3=Color3.fromRGB(63,57,126)
- Instance.new('UICorner',b).CornerRadius=UDim.new(0,6)
+local Players = game:GetService('Players')
+local UIS = game:GetService('UserInputService')
+local lp = Players.LocalPlayer
+if not lp then return end
+local pg = lp:WaitForChild('PlayerGui')
+local prior = pg:FindFirstChild('KIMSInvShapeV18')
+if prior then prior:Destroy() end
+local gui = Instance.new('ScreenGui')
+gui.Name = 'KIMSInvShapeV18'; gui.ResetOnSpawn = false
+gui.DisplayOrder = 990; gui.Parent = pg
+local frame = Instance.new('Frame')
+frame.Size = UDim2.new(.94,0,.70,0); frame.Position = UDim2.new(.03,0,.14,0)
+frame.BackgroundColor3=Color3.fromRGB(14,20,36); frame.BorderSizePixel=0
+frame.Active=true; frame.Parent=gui
+Instance.new('UICorner',frame).CornerRadius=UDim.new(0,12)
+local stroke=Instance.new('UIStroke',frame)
+stroke.Color=Color3.fromRGB(115,94,230); stroke.Thickness=2
+local title=Instance.new('TextLabel',frame)
+title.BackgroundTransparency=1; title.Position=UDim2.new(.025,0,0,5)
+title.Size=UDim2.new(.95,0,0,30)
+title.Text='KIMS V18 | INVENTORY RECORD AUDIT'
+title.Font=Enum.Font.GothamBold;title.TextSize=15
+ title.TextColor3=Color3.fromRGB(200,190,255); title.TextXAlignment=Enum.TextXAlignment.Left
+local function makeButton(s,x,w)
+ local b=Instance.new('TextButton',frame)
+ b.Position=UDim2.new(x,0,0,43);b.Size=UDim2.new(w,0,0,33)
+ b.Text=s;b.TextScaled=true;b.Font=Enum.Font.GothamBold
+ b.TextColor3=Color3.new(1,1,1);b.BackgroundColor3=Color3.fromRGB(66,58,126)
+ Instance.new('UICorner',b).CornerRadius=UDim.new(0,7)
  return b
 end
-local copyBtn=btn('SALIN',.025,.28)
-local miniBtn=btn('MINI',.36,.27)
-local closeBtn=btn('TUTUP',.68,.29)
-local status=Instance.new('TextLabel',pane)
-status.Position=UDim2.new(.03,0,0,83); status.Size=UDim2.new(.94,0,0,23)
-status.BackgroundTransparency=1; status.TextXAlignment=Enum.TextXAlignment.Left
-status.Font=Enum.Font.Code; status.TextSize=12
-status.TextColor3=Color3.fromRGB(112,231,168)
-status.Text='Membaca metadata objek Replion...'
-local sc=Instance.new('ScrollingFrame',pane)
-sc.Position=UDim2.new(.025,0,0,110); sc.Size=UDim2.new(.95,0,1,-120)
-sc.BackgroundColor3=Color3.fromRGB(21,27,47); sc.BorderSizePixel=0
-sc.ScrollBarThickness=5; sc.AutomaticCanvasSize=Enum.AutomaticSize.Y
-local output=Instance.new('TextLabel',sc)
-output.Position=UDim2.new(0,7,0,6); output.Size=UDim2.new(1,-20,0,0)
-output.AutomaticSize=Enum.AutomaticSize.Y; output.TextWrapped=true
-output.TextXAlignment=Enum.TextXAlignment.Left; output.TextYAlignment=Enum.TextYAlignment.Top
-output.Font=Enum.Font.Code; output.TextSize=12
-output.TextColor3=Color3.fromRGB(227,235,252)
-output.BackgroundTransparency=1
+local copy=makeButton('SALIN',.025,.28)
+local mini=makeButton('MINI',.355,.27)
+local close=makeButton('TUTUP',.685,.28)
+local status=Instance.new('TextLabel',frame)
+status.Position=UDim2.new(.03,0,0,82);status.Size=UDim2.new(.94,0,0,23)
+status.BackgroundTransparency=1;status.TextXAlignment=Enum.TextXAlignment.Left
+status.TextColor3=Color3.fromRGB(124,232,174)
+status.Font=Enum.Font.Code;status.TextSize=12
+status.Text='Memeriksa schema inventory...'
+local scroll=Instance.new('ScrollingFrame',frame)
+scroll.Position=UDim2.new(.025,0,0,110);scroll.Size=UDim2.new(.95,0,1,-120)
+scroll.BackgroundColor3=Color3.fromRGB(20,27,47);scroll.BorderSizePixel=0
+scroll.ScrollBarThickness=6;scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+local out=Instance.new('TextLabel',scroll)
+out.Position=UDim2.new(0,8,0,5);out.Size=UDim2.new(1,-20,0,0)
+out.AutomaticSize=Enum.AutomaticSize.Y;out.BackgroundTransparency=1
+out.TextWrapped=true;out.TextXAlignment=Enum.TextXAlignment.Left
+out.TextYAlignment=Enum.TextYAlignment.Top;out.Font=Enum.Font.Code
+out.TextSize=12;out.TextColor3=Color3.fromRGB(231,237,250)
 
-local lines={}; local busy=true; local cancel=false
-local function emit(s)
- if #lines<260 then lines[#lines+1]=tostring(s) end
+local lines={};local finished=false;local cancel=false
+local function log(s)
+ if #lines<210 then lines[#lines+1]=tostring(s) end
 end
-local function show() if screen.Parent then output.Text=table.concat(lines,'\n') end end
-local function safeCount(tbl,limit)
- local n,nt,ns,nn,no=0,0,0,0,0
- for _,v in pairs(tbl) do
+local function show() if gui.Parent then out.Text=table.concat(lines,'\n') end end
+local knownFields={
+ Id=true,ID=true,id=true,ItemId=true,ItemID=true,UID=true,Uuid=true,UUID=true,
+ Name=true,name=true,Type=true,type=true,Category=true,category=true,
+ Item=true,item=true,Items=true,Quantity=true,quantity=true,Count=true,count=true,
+ Amount=true,amount=true,Weight=true,weight=true,Mutation=true,mutation=true,
+ Variant=true,variant=true,Rarity=true,rarity=true,Equipped=true,equipped=true,
+ Level=true,level=true,Fish=true,fish=true,Inventory=true,Data=true,
+ Size=true,Class=true,Value=true,IsShiny=true,Shiny=true,Timestamp=true,
+ Enchant=true,Enchantments=true,Stats=true,Attributes=true,Locked=true,
+ InstanceId=true,ItemName=true,UniqueId=true,UniqueID=true,ItemType=true
+}
+local categories={'Fishing Rods','Fish','Baits','Potions','Pets','Pet Eggs','Lanterns',
+ 'Halos','Emotes','Charms','Gears','Enchant Stones','Boats','Items','Inventory'}
+local function classify(t,limit)
+ local n,nnum,nstr,nother,vtab,vnum,vstr,vother=0,0,0,0,0,0,0,0
+ for k,v in pairs(t) do
   n=n+1
-  local t=type(v)
-  if t=='table' then nt=nt+1 elseif t=='number' then nn=nn+1
-  elseif t=='string' then ns=ns+1 else no=no+1 end
+  if type(k)=='number' then nnum=nnum+1 elseif type(k)=='string' then nstr=nstr+1
+  else nother=nother+1 end
+  if type(v)=='table' then vtab=vtab+1 elseif type(v)=='number' then vnum=vnum+1
+  elseif type(v)=='string' then vstr=vstr+1 else vother=vother+1 end
   if n>=limit then break end
  end
- return n,nt,nn,ns,no,n>=limit
+ return n,nnum,nstr,nother,vtab,vnum,vstr,vother
 end
-local categories={
- 'Fish','Fishing Rods','Rods','Baits','Potions','Pets','Pet Eggs',
- 'Gears','Lanterns','Halos','Emotes','Enchant Stones','Charms','Boats',
- 'Items','Inventory','Inventories'
-}
-local function catSummary(t)
- local arr={}
- for _,name in ipairs(categories) do
-  local v=rawget(t,name)
+local function formatShape(t)
+ if type(t)~='table' then return type(t) end
+ local found={};local unknown=0;local total=0
+ for k,v in pairs(t) do
+  total=total+1
+  if type(k)=='string' and knownFields[k] then
+   found[#found+1]=k..':'..type(v)
+  else unknown=unknown+1 end
+  if total>=100 then break end
+ end
+ table.sort(found)
+ if #found>22 then
+  local temp={}
+  for i=1,22 do temp[i]=found[i] end
+  found=temp
+ end
+ return 'fields={'..table.concat(found,', ')..'} otherFields='..unknown..' sampled='..total
+end
+local function shapeOfCategory(name,t)
+ local n,kn,ks,ko,vt,vn,vs,vo=classify(t,12000)
+ log('  '..name..': entries='..n..' key[num/str/other]='..kn..'/'..ks..'/'..ko..
+  ' value[table/num/str/other]='..vt..'/'..vn..'/'..vs..'/'..vo)
+ local shown=0
+ for _,v in pairs(t) do
   if type(v)=='table' then
-   local n,tt,nn,ss,oo,cap=safeCount(v,2000)
-   arr[#arr+1]=name..'='..n..(cap and '+' or '')..'(T/N/S/O '..tt..'/'..nn..'/'..ss..'/'..oo..')'
+   shown=shown+1
+   log('    sampleRecord'..shown..' '..formatShape(v))
+   if shown>=2 then break end
   end
  end
- return arr
+ if shown==0 then log('    no table records sampled') end
 end
-local function safeChannel(ch)
- if type(ch)~='string' then return '(type='..type(ch)..')' end
- local approved={Data=true,PlayerData=true,Inventory=true,Player=true,Stats=true,Profile=true,Fish=true,Items=true}
- if approved[ch] then return ch end
- return '(redacted string channel)'
-end
-local function upvaluesOf(fn)
+local function getUps(f)
  if type(getupvalues)=='function' then
-  local ok,x=pcall(getupvalues,fn)
-  if ok and type(x)=='table' then return x end
+  local ok,v=pcall(getupvalues,f)
+  if ok and type(v)=='table' then return v end
  end
  if type(debug)=='table' and type(debug.getupvalues)=='function' then
-  local ok,x=pcall(debug.getupvalues,fn)
-  if ok and type(x)=='table' then return x end
+  local ok,v=pcall(debug.getupvalues,f)
+  if ok and type(v)=='table' then return v end
  end
  return nil
 end
-local targets={
- 'ReplicatedStorage.Packages.Replion',
- 'ReplicatedStorage.Packages._Index.ytrev_replion@2.0.0-rc.3.replion.Client',
- 'ReplicatedStorage.Packages._Index.ytrev_replion@2.0.0-rc.3.replion.Client.ClientReplion',
- 'ReplicatedStorage.Controllers.InventoryController'
-}
-local refs={}; local queue={}; local head=1
-local visited=setmetatable({},{__mode='k'})
-local inspected=0; local keys=0; local functions=0
-local results={}; local uniqueChannels={}
-local MAX_NODES=1650; local MAX_KEYS=11200; local MAX_DEPTH=6
-local MAX_FUNCTION_UPS=210; local MAX_QUEUE=5400
-local function enqueue(v,path,depth)
- if (type(v)=='table' or type(v)=='function') and #queue<MAX_QUEUE and not visited[v] then
-  queue[#queue+1]={v=v,path=path,depth=depth}
+local function textAt(root,names)
+ local o=root
+ for _,k in ipairs(names) do
+  if not o then return '?' end
+  o=o:FindFirstChild(k)
  end
-end
-local function recordCandidate(path,t)
- local isData=type(rawget(t,'Data'))=='table'
- local isReplion=isData and (rawget(t,'Channel')~=nil or rawget(t,'Tags')~=nil or type(rawget(t,'Get'))=='function')
- local cats=catSummary(t)
- if isReplion or #cats>=2 then
-  if #results>=38 then return end
-  local data=isData and rawget(t,'Data') or nil
-  local dataCats=data and catSummary(data) or {}
-  local n=select(1,safeCount(t,250))
-  local record={path=path,kind=isReplion and 'CLIENT-REPLION-LIKE' or 'CATEGORY-MAP',size=n,
-                cats=cats,dataCats=dataCats,channel=safeChannel(rawget(t,'Channel'))}
-  results[#results+1]=record
-  if isReplion then uniqueChannels[record.channel]=true end
+ if o and (o:IsA('TextLabel') or o:IsA('TextButton')) then
+  return tostring(o.Text):gsub('[\r\n]',' '):sub(1,38)
  end
+ return '?'
 end
 local function run()
- emit('KIMS V17 | REPLION SOURCE INSPECTOR | READ ONLY')
- emit('PlaceId='..tostring(game.PlaceId))
- emit('Focus: already-loaded Replion client and replicated-state metadata.')
- emit('No Zetsu, HTTP, getgc, remote, item actions or raw account data.')
- emit('Channel values redacted except standard names. No item values printed.')
- emit('')
- emit('=== EXACT LOADED MODULES ===')
- if type(getloadedmodules)~='function' then
-  emit('getloadedmodules unavailable: cannot safely locate cached exports.')
-  return
+ log('KIMS V18 | STRUCTURE ONLY | NO UPLOAD')
+ log('PlaceId='..tostring(game.PlaceId))
+ log('Target: cached InventoryController -> Data.Inventory')
+ log('No getgc, HTTP, remote calls, Zetsu, item actions, raw item values.')
+ local invGui=pg:FindFirstChild('Inventory')
+ if invGui then
+  log('=== CURRENT GUI CROSS-CHECK (may be cached) ===')
+  for _,spec in ipairs({
+   {'Fish','Fish','BagSize'}, {'Rods','Rods','ItemSize'}, {'Items','Inventory','ItemSize'}
+  }) do
+   local txt=textAt(invGui,{'Main','Top','Options',spec[2],'Label',spec[3]})
+   log(spec[1]..'='..txt)
+  end
  end
+ log('')
+ log('=== MODULE ===')
+ if type(getloadedmodules)~='function' then log('getloadedmodules unavailable');return end
  local ok,loaded=pcall(getloadedmodules)
- if not ok or type(loaded)~='table' then emit('getloadedmodules failed');return end
- local count=0
- for _,m in ipairs(loaded) do
+ if not ok or type(loaded)~='table' then log('getloadedmodules failed');return end
+ local target
+ for i,m in ipairs(loaded) do
   if typeof(m)=='Instance' and m:IsA('ModuleScript') then
-   local op,full=pcall(function() return m:GetFullName() end)
-   if op then
-    for _,target in ipairs(targets) do
-     if full==target then refs[target]=m end
-    end
-   end
+   local okName,name=pcall(function() return m:GetFullName() end)
+   if okName and name=='ReplicatedStorage.Controllers.InventoryController' then target=m;break end
   end
-  count=count+1
-  if count%450==0 then task.wait() end
+  if i%500==0 then task.wait() end
  end
- emit('Loaded modules='..count)
- local readable=0
- for _,target in ipairs(targets) do
-  local module=refs[target]
-  if module then
-   -- Only already-loaded module instances; require should hit cache.
-   local worked,ex=pcall(require,module)
-   emit('MODULE '..target..' => '..(worked and type(ex) or 'unavailable'))
-   if worked then
-    readable=readable+1
-    enqueue(ex, target=='ReplicatedStorage.Controllers.InventoryController' and 'InventoryController/[export]' or 'Replion/[export]',0)
-    if type(ex)=='table' then
-     local client=rawget(ex,'Client')
-     if type(client)=='table' then
-      emit('  Client export found; GetReplion='..type(rawget(client,'GetReplion')))
-      enqueue(client,'Replion/Client',0)
-     end
-     if type(rawget(ex,'GetReplion'))=='function' then
-      emit('  GetReplion function present (not called).')
-     end
-    end
-   end
-  else
-   emit('MODULE '..target..' => not loaded')
+ if not target then log('InventoryController is not loaded');return end
+ local good,export=pcall(require,target)
+ if not good then log('Cached module require unavailable');return end
+ log('InventoryController cached export='..type(export))
+ local queue={{v=export,path='[export]',depth=0}}; local head=1
+ local visited=setmetatable({},{__mode='k'})
+ local inventories=setmetatable({},{__mode='k'})
+ local dataParents=setmetatable({},{__mode='k'})
+ local MAX_NODES=1450;local MAX_DEPTH=7;local MAX_FUNCS=200
+ local inspected=0;local fnSeen=0;local checked=0;local found=0
+ local deadline=os.clock()+13
+ local function queueValue(v,path,depth)
+  if depth<=MAX_DEPTH and (type(v)=='table' or type(v)=='function') and #queue<5500 then
+   queue[#queue+1]={v=v,path=path,depth=depth}
   end
  end
- emit('Cached module exports read='..readable)
- show()
- local deadline=os.clock()+12
- emit('')
- emit('=== BOUNDED CLIENT STATE GRAPH ===')
- while head<=#queue and not cancel and inspected<MAX_NODES and keys<MAX_KEYS
-      and os.clock()<deadline do
-  local node=queue[head]; head=head+1
+ local function auditInventory(inv,path,parent)
+  if inventories[inv] then return end
+  inventories[inv]=true;found=found+1
+  if found>4 then return end
+  log('')
+  log('INVENTORY CANDIDATE '..found..' path='..path:sub(1,130))
+  if parent and type(parent)=='table' and not dataParents[parent] then
+   dataParents[parent]=true
+   local pFields={}
+   for k,v in pairs(parent) do
+    if type(k)=='string' then
+     local s=k:lower()
+     if s:find('fish',1,true) or s:find('invent',1,true) or
+        s:find('item',1,true) or s:find('bag',1,true) or
+        s:find('caught',1,true) or s:find('data',1,true) then
+      pFields[#pFields+1]=k..':'..type(v)
+     end
+    end
+    if #pFields>=24 then break end
+   end
+   table.sort(pFields)
+   log('  Parent relevant keys: '..(#pFields>0 and table.concat(pFields,', ') or '(none found)'))
+  end
+  for _,name in ipairs(categories) do
+   local t=rawget(inv,name)
+   if type(t)=='table' then shapeOfCategory(name,t) end
+  end
+ end
+ while head<=#queue and not cancel and inspected<MAX_NODES and os.clock()<deadline do
+  local node=queue[head];head=head+1
   local obj=node.v
   if not visited[obj] then
-   visited[obj]=true; inspected=inspected+1
+   visited[obj]=true;inspected=inspected+1
    if type(obj)=='function' then
-    functions=functions+1
-    if functions<=MAX_FUNCTION_UPS and node.depth<MAX_DEPTH then
-     local ups=upvaluesOf(obj)
-     if ups then
-      local localN=0
-      for _,v in pairs(ups) do
-       localN=localN+1
-       if localN>12 then break end
-       enqueue(v,node.path..'/[upvalue]',node.depth+1)
+    fnSeen=fnSeen+1
+    if fnSeen<=MAX_FUNCS then
+     local up=getUps(obj)
+     if up then
+      local c=0
+      for _,v in pairs(up) do
+       c=c+1; if c>14 then break end
+       queueValue(v,node.path..'/[upvalue]',node.depth+1)
       end
      end
     end
-   else
-    recordCandidate(node.path,obj)
-    local processed=0
-    for k,v in pairs(obj) do
-     processed=processed+1;keys=keys+1
-     local isImportant=(k=='Data' or k=='Replions' or k=='Replion' or k=='Inventory' or k=='Items'
-         or k=='Client' or k=='State' or k=='Registry')
-     local part=isImportant and tostring(k) or '[entry]'
-     if node.depth<MAX_DEPTH and (processed<=34 or isImportant) then
-      enqueue(v,node.path..'/'..part,node.depth+1)
+   elseif type(obj)=='table' then
+    local inv=rawget(obj,'Inventory')
+    if type(inv)=='table' and (type(rawget(inv,'Fishing Rods'))=='table' or
+      type(rawget(inv,'Pets'))=='table' or type(rawget(inv,'Fish'))=='table') then
+     auditInventory(inv,node.path..'/Inventory',obj)
+    end
+    local d=rawget(obj,'Data')
+    if type(d)=='table' then
+     local inD=rawget(d,'Inventory')
+     if type(inD)=='table' and (type(rawget(inD,'Fishing Rods'))=='table' or
+       type(rawget(inD,'Pets'))=='table' or type(rawget(inD,'Fish'))=='table') then
+      auditInventory(inD,node.path..'/Data/Inventory',d)
      end
-     if processed>=110 or keys>=MAX_KEYS then break end
+     queueValue(d,node.path..'/Data',node.depth+1)
+    end
+    local n=0
+    for k,v in pairs(obj) do
+     n=n+1;checked=checked+1
+     if node.depth<MAX_DEPTH and (n<=42 or k=='Inventory' or k=='Data') then
+      local label=(k=='Inventory' or k=='Data') and tostring(k) or '[entry]'
+      queueValue(v,node.path..'/'..label,node.depth+1)
+     end
+     if n>=95 then break end
     end
    end
-   if inspected%40==0 then
-    status.Text='Memeriksa '..inspected..' objek...'
+   if inspected%50==0 then
+    status.Text='Membaca struktur '..inspected..'...'
     task.wait()
    end
   end
  end
- emit('Inspected='..inspected..' | fields='..keys..' | functions='..functions)
- emit('Candidates='..#results..' | graph bounded='..tostring(head<=#queue))
- if os.clock()>=deadline then emit('Time limit reached; report may be partial.') end
- emit('')
- emit('=== STATE / REPLION CANDIDATES ===')
- if #results==0 then emit('No Replion-shaped table located in bounded graph.') end
- table.sort(results,function(a,b)
-  local sa=(a.kind=='CLIENT-REPLION-LIKE' and 10 or 0)+#a.cats+#a.dataCats
-  local sb=(b.kind=='CLIENT-REPLION-LIKE' and 10 or 0)+#b.cats+#b.dataCats
-  return sa>sb
- end)
- for i=1,math.min(#results,22) do
-  local r=results[i]
-  emit('C'..i..' '..r.kind..' path='..r.path:sub(1,116)..' | channel='..r.channel)
-  if #r.cats>0 then
-   for j=1,math.min(#r.cats,9) do emit('  '..r.cats[j]) end
-  end
-  if #r.dataCats>0 then
-   emit('  [Data children]')
-   for j=1,math.min(#r.dataCats,9) do emit('    '..r.dataCats[j]) end
-  end
- end
- emit('')
- emit('=== INTERPRETATION ===')
- emit('Replion framework is confirmed; no candidate is yet verified as owned inventory.')
- emit('Fish category entries can be species/statistics, NOT fish quantity.')
- emit('A true item source needs record shape plus consistency with GUI counter.')
- emit('Do not use candidate totals to populate kims.asia/statakun.')
- emit('No sensitive strings, credentials, item details or payloads exported.')
+ log('')
+ log('=== FINISH ===')
+ log('Graph nodes='..inspected..' | functions='..fnSeen..' | fields='..checked)
+ log('Inventory candidates='..found..' | stopped='..tostring(cancel))
+ if os.clock()>=deadline then log('Time limit reached (bounded scan)') end
+ if found==0 then log('Target not located this run. No ownership claim.') end
+ log('A matching Rods count strongly supports ownership, but is not proof alone.')
+ log('Individual fish may reside in a separate replicated collection.')
+ log('No item values, credentials, ID contents, or uploads collected.')
 end
-copyBtn.MouseButton1Click:Connect(function()
- if busy then status.Text='Tunggu SELESAI dulu';return end
- local clip=type(setclipboard)=='function' and setclipboard or (type(toclipboard)=='function' and toclipboard)
+copy.MouseButton1Click:Connect(function()
+ if not finished then status.Text='Tunggu SELESAI';return end
+ local clip=type(setclipboard)=='function' and setclipboard or
+            (type(toclipboard)=='function' and toclipboard)
  if not clip then status.Text='Clipboard unsupported';return end
  local ok=pcall(clip,table.concat(lines,'\n'))
- status.Text=ok and 'Laporan tersalin' or 'SALIN gagal'
+ status.Text=ok and 'Hasil tersalin' or 'SALIN gagal'
 end)
-local mini=false
-miniBtn.MouseButton1Click:Connect(function()
- mini=not mini
- sc.Visible=not mini
- pane.Size=mini and UDim2.new(.94,0,0,112) or UDim2.new(.94,0,.68,0)
- miniBtn.Text=mini and 'BUKA' or 'MINI'
+local small=false
+mini.MouseButton1Click:Connect(function()
+ small=not small;scroll.Visible=not small
+ frame.Size=small and UDim2.new(.94,0,0,111) or UDim2.new(.94,0,.70,0)
+ mini.Text=small and 'BUKA' or 'MINI'
 end)
-closeBtn.MouseButton1Click:Connect(function() cancel=true;screen:Destroy() end)
-do
- local dragging=false;local start;local origin
- headline.InputBegan:Connect(function(x)
-  if x.UserInputType==Enum.UserInputType.Touch or x.UserInputType==Enum.UserInputType.MouseButton1 then
-   dragging=true;start=x.Position;origin=pane.Position
-  end
- end)
- headline.InputEnded:Connect(function(x)
-  if x.UserInputType==Enum.UserInputType.Touch or x.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end
- end)
- UIS.InputChanged:Connect(function(x)
-  if cancel or not dragging or not start then return end
-  if x.UserInputType==Enum.UserInputType.Touch or x.UserInputType==Enum.UserInputType.MouseMovement then
-   local d=x.Position-start
-   pane.Position=UDim2.new(origin.X.Scale,origin.X.Offset+d.X,origin.Y.Scale,origin.Y.Offset+d.Y)
-  end
- end)
-end
+close.MouseButton1Click:Connect(function() cancel=true;gui:Destroy() end)
+local drag=false;local start;local original
+ title.InputBegan:Connect(function(input)
+ if input.UserInputType==Enum.UserInputType.Touch or
+    input.UserInputType==Enum.UserInputType.MouseButton1 then
+   drag=true;start=input.Position;original=frame.Position
+ end
+end)
+title.InputEnded:Connect(function(input)
+ if input.UserInputType==Enum.UserInputType.Touch or
+    input.UserInputType==Enum.UserInputType.MouseButton1 then drag=false end
+end)
+UIS.InputChanged:Connect(function(input)
+ if cancel or not drag or not start then return end
+ if input.UserInputType==Enum.UserInputType.Touch or
+    input.UserInputType==Enum.UserInputType.MouseMovement then
+  local delta=input.Position-start
+  frame.Position=UDim2.new(original.X.Scale,original.X.Offset+delta.X,
+                         original.Y.Scale,original.Y.Offset+delta.Y)
+ end
+end)
 show()
 task.spawn(function()
- local good,err=pcall(run)
- busy=false
+ local ok,err=pcall(run)
+ finished=true
  if not cancel then
-  if not good then emit('ERROR: '..tostring(err):sub(1,130)) end
-  show()
-  status.Text=good and 'SELESAI - tekan SALIN' or 'ERROR - tekan SALIN'
+  if not ok then log('ERROR: '..tostring(err):sub(1,180)) end
+  show();status.Text=ok and 'SELESAI - tekan SALIN' or 'ERROR - tekan SALIN'
  end
 end)
