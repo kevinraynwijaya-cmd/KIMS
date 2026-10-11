@@ -1,411 +1,308 @@
--- KIMS TECH | PLAYERDATA SOURCE TRACER V16
--- Fish It / Delta Android | local metadata inspection only.
--- Does NOT run Zetsu, monitor HTTP, upload data, fire remotes, invoke game getters,
--- dump inventory contents, read credentials, or change inventory.
--- Requires ONLY module paths returned by getloadedmodules; cached require is normally
--- side-effect-free but this cannot be guaranteed across all executor/game environments.
--- Goal: find the module/function/table *paths* that may lead to player-owned data.
+-- KIMS TECH | REPLION SOURCE INSPECTOR V17
+-- Fish It / Delta | Read-only, bounded, metadata-only inspection.
+-- No Zetsu, getgc, HTTP, remote calls, item mutations or payload export.
+-- Requires only module paths already loaded in this game session.
 
-local Players = game:GetService('Players')
-local UserInputService = game:GetService('UserInputService')
-local player = Players.LocalPlayer
-if not player then return end
-local pg = player:WaitForChild('PlayerGui')
-local old = pg:FindFirstChild('KIMSPlayerDataTracerV16')
+local Players=game:GetService('Players')
+local UIS=game:GetService('UserInputService')
+local plr=Players.LocalPlayer
+if not plr then return end
+local pg=plr:WaitForChild('PlayerGui')
+local old=pg:FindFirstChild('KIMSReplionV17')
 if old then old:Destroy() end
-local screen = Instance.new('ScreenGui')
-screen.Name = 'KIMSPlayerDataTracerV16'
-screen.ResetOnSpawn = false
-screen.DisplayOrder = 999
-screen.Parent = pg
-
-local panel = Instance.new('Frame')
-panel.Size = UDim2.new(.94,0,.68,0)
-panel.Position = UDim2.new(.03,0,.16,0)
-panel.Active = true
-panel.BackgroundColor3 = Color3.fromRGB(13,20,37)
-panel.BorderSizePixel = 0
-panel.Parent = screen
-Instance.new('UICorner',panel).CornerRadius = UDim.new(0,10)
-local stroke = Instance.new('UIStroke',panel)
-stroke.Color = Color3.fromRGB(116,91,229)
-stroke.Thickness = 2
-local title = Instance.new('TextLabel',panel)
-title.Size = UDim2.new(.96,0,0,30)
-title.Position = UDim2.new(.02,0,0,6)
-title.BackgroundTransparency = 1
-title.TextColor3 = Color3.fromRGB(214,203,255)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 15
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Text = 'KIMS V16 | PLAYERDATA TRACE'
-local function button(name,x,w)
- local b=Instance.new('TextButton',panel)
- b.Position=UDim2.new(x,0,0,43)
- b.Size=UDim2.new(w,0,0,35)
- b.Text=name; b.TextScaled=true; b.Font=Enum.Font.GothamBold
- b.TextColor3=Color3.new(1,1,1)
- b.BackgroundColor3=Color3.fromRGB(66,56,124)
+local screen=Instance.new('ScreenGui')
+screen.Name='KIMSReplionV17'; screen.ResetOnSpawn=false
+screen.DisplayOrder=999; screen.Parent=pg
+local pane=Instance.new('Frame')
+pane.Size=UDim2.new(.94,0,.68,0); pane.Position=UDim2.new(.03,0,.15,0)
+pane.BackgroundColor3=Color3.fromRGB(13,19,36); pane.BorderSizePixel=0
+pane.Active=true; pane.Parent=screen
+Instance.new('UICorner',pane).CornerRadius=UDim.new(0,10)
+local border=Instance.new('UIStroke',pane); border.Thickness=2
+border.Color=Color3.fromRGB(107,91,224)
+local headline=Instance.new('TextLabel',pane)
+headline.Position=UDim2.new(.025,0,0,6); headline.Size=UDim2.new(.95,0,0,30)
+headline.BackgroundTransparency=1; headline.Font=Enum.Font.GothamBold
+headline.TextSize=14; headline.TextXAlignment=Enum.TextXAlignment.Left
+headline.TextColor3=Color3.fromRGB(205,190,255)
+headline.Text='KIMS V17 | REPLION SOURCE INSPECTOR'
+local function btn(txt,x,w)
+ local b=Instance.new('TextButton',pane)
+ b.Position=UDim2.new(x,0,0,43); b.Size=UDim2.new(w,0,0,33)
+ b.Text=txt; b.TextScaled=true; b.Font=Enum.Font.GothamBold
+ b.TextColor3=Color3.new(1,1,1); b.BackgroundColor3=Color3.fromRGB(63,57,126)
  Instance.new('UICorner',b).CornerRadius=UDim.new(0,6)
  return b
 end
-local copyBtn=button('SALIN',.03,.27)
-local miniBtn=button('MINI',.36,.27)
-local closeBtn=button('TUTUP',.69,.27)
-local status=Instance.new('TextLabel',panel)
-status.Position=UDim2.new(.03,0,0,86)
-status.Size=UDim2.new(.94,0,0,19)
-status.BackgroundTransparency=1
-status.TextColor3=Color3.fromRGB(109,226,170)
-status.Font=Enum.Font.Code
-status.TextSize=12
-status.TextXAlignment=Enum.TextXAlignment.Left
-status.Text='Otomatis memeriksa petunjuk sumber PlayerData...'
-local sc=Instance.new('ScrollingFrame',panel)
-sc.Position=UDim2.new(.025,0,0,112)
-sc.Size=UDim2.new(.95,0,1,-121)
-sc.BackgroundColor3=Color3.fromRGB(20,28,48)
-sc.BorderSizePixel=0
-sc.ScrollBarThickness=5
-sc.AutomaticCanvasSize=Enum.AutomaticSize.Y
-local out=Instance.new('TextLabel',sc)
-out.Position=UDim2.new(0,7,0,6)
-out.Size=UDim2.new(1,-19,0,0)
-out.AutomaticSize=Enum.AutomaticSize.Y
-out.BackgroundTransparency=1
-out.TextWrapped=true
-out.TextXAlignment=Enum.TextXAlignment.Left
-out.TextYAlignment=Enum.TextYAlignment.Top
-out.TextColor3=Color3.fromRGB(225,234,250)
-out.Font=Enum.Font.Code
-out.TextSize=12
+local copyBtn=btn('SALIN',.025,.28)
+local miniBtn=btn('MINI',.36,.27)
+local closeBtn=btn('TUTUP',.68,.29)
+local status=Instance.new('TextLabel',pane)
+status.Position=UDim2.new(.03,0,0,83); status.Size=UDim2.new(.94,0,0,23)
+status.BackgroundTransparency=1; status.TextXAlignment=Enum.TextXAlignment.Left
+status.Font=Enum.Font.Code; status.TextSize=12
+status.TextColor3=Color3.fromRGB(112,231,168)
+status.Text='Membaca metadata objek Replion...'
+local sc=Instance.new('ScrollingFrame',pane)
+sc.Position=UDim2.new(.025,0,0,110); sc.Size=UDim2.new(.95,0,1,-120)
+sc.BackgroundColor3=Color3.fromRGB(21,27,47); sc.BorderSizePixel=0
+sc.ScrollBarThickness=5; sc.AutomaticCanvasSize=Enum.AutomaticSize.Y
+local output=Instance.new('TextLabel',sc)
+output.Position=UDim2.new(0,7,0,6); output.Size=UDim2.new(1,-20,0,0)
+output.AutomaticSize=Enum.AutomaticSize.Y; output.TextWrapped=true
+output.TextXAlignment=Enum.TextXAlignment.Left; output.TextYAlignment=Enum.TextYAlignment.Top
+output.Font=Enum.Font.Code; output.TextSize=12
+output.TextColor3=Color3.fromRGB(227,235,252)
+output.BackgroundTransparency=1
 
-local cancelled=false
-local busy=true
-local lines={}
-local function say(s)
+local lines={}; local busy=true; local cancel=false
+local function emit(s)
  if #lines<260 then lines[#lines+1]=tostring(s) end
 end
-local function refresh()
- if screen.Parent then out.Text=table.concat(lines,'\n') end
-end
-local function clean(s,max)
- return tostring(s or ''):gsub('[\r\n\t]',' '):sub(1,max or 115)
-end
-local function safePath(obj)
- local ok,res=pcall(function() return obj:GetFullName() end)
- return ok and clean(res,145) or '(path unavailable)'
-end
-local function low(k)
- return type(k)=='string' and string.lower(k) or ''
-end
-
--- Module ranking is STRICT. No arbitrary 'data' substring hits or unrelated GUI modules.
-local exactRanks={
- ['ReplicatedStorage.Controllers.InventoryController']=97,
- ['ReplicatedStorage.Controllers.InventoryController.InventoryPagination']=80,
- ['ReplicatedStorage.Shared.InventoryMapping']=65,
- ['ReplicatedStorage.Controllers.InteractionController.Internal.InventoryUtility']=70,
- ['ReplicatedFirst.GAME.Runner.WaitForPlayerData']=100
-}
-local function moduleRank(p)
- if exactRanks[p] then return exactRanks[p] end
- local s=string.lower(p)
- if s:find('tilerender',1,true) or s:find('particles',1,true) or s:find('.items.',1,true) then return 0 end
- if s:find('playerdata',1,true) or s:find('clientdata',1,true) then return 94 end
- if s:find('datacontroller',1,true) or s:find('profilecontroller',1,true) then return 91 end
- if s:find('replicacontroller',1,true) or s:find('replica.',1,true) or s:find('replion',1,true) then return 89 end
- if s:find('profilemanager',1,true) or s:find('datamanager',1,true) then return 86 end
- if s:find('replicationcontroller',1,true) or s:find('statesync',1,true) then return 84 end
- if s:find('inventorystate',1,true) or s:find('inventorydata',1,true) then return 83 end
- if s:find('playerstate',1,true) or s:find('userstate',1,true) then return 82 end
- if s:find('inventorycontroller.inventoryfilter',1,true) then return 45 end
- return 0
-end
-
-local functionsOfInterest={
- get=true,getdata=true,getplayerdata=true,waitforplayerdata=true,
- getinventory=true,getitems=true,getstate=true,getprofile=true,
- getreplica=true,getreplion=true,observe=true,subscribe=true,
- getitem=true,getplayerprofile=true,getsave=true,getcacheddata=true,
- getitemdata=true,ondatachanged=true,inventorychanged=true
-}
-local collectionKeys={
- fish=true,fishes=true,inventory=true,inventories=true,items=true,
- rods=true,['fishing rods']=true,pets=true,baits=true,gears=true,
- potions=true,['enchant stones']=true,emotes=true,halos=true,
- lanterns=true,charms=true,boats=true
-}
-local stateKeys={
- data=true,playerdata=true,playerstate=true,profile=true,replica=true,
- replion=true,state=true,inventorydata=true,inventory=true,
- profiledata=true,savedata=true,save=true,owneditems=true,
- itemdata=true,items=true,collection=true,inventoryitems=true
-}
-local function showKey(k)
- local l=low(k)
- if stateKeys[l] or collectionKeys[l] or functionsOfInterest[l] then return clean(k,34) end
- return '[entry]'
-end
-
-local MAX_MODULES=20
-local MAX_NODES=2300
-local MAX_FUNCTION_UPVALUES=340
-local MAX_TABLE_KEYS=16000
-local MAX_RESULTS=22
-local MAX_DEPTH=5
-local CPU_SECONDS=19
-local MAX_QUEUE=9500
-local visited=setmetatable({},{__mode='k'})
-local queue={}
-local qi=1
-local examined=0
-local functionCount=0
-local tableKeysChecked=0
-local candidates={}
-local getterNames={}
-local seenHints={}
-local baselineCount=0
-local function enqueue(v,source,p,depth)
- local t=type(v)
- if (t=='table' or t=='function') and #queue<MAX_QUEUE and not visited[v] then
-  queue[#queue+1]={v=v,source=source,path=p,depth=depth}
- end
-end
-local function upvaluesOf(fn)
- if type(getupvalues)=='function' then
-  local ok,r=pcall(getupvalues,fn)
-  if ok and type(r)=='table' then return r end
- end
- if type(debug)=='table' and type(debug.getupvalues)=='function' then
-  local ok,r=pcall(debug.getupvalues,fn)
-  if ok and type(r)=='table' then return r end
- end
- return nil
-end
-local function summarizeCollection(tbl)
- local n,tableValues,numberValues,stringValues,others=0,0,0,0,0
+local function show() if screen.Parent then output.Text=table.concat(lines,'\n') end end
+local function safeCount(tbl,limit)
+ local n,nt,ns,nn,no=0,0,0,0,0
  for _,v in pairs(tbl) do
   n=n+1
   local t=type(v)
-  if t=='table' then tableValues=tableValues+1
-  elseif t=='number' then numberValues=numberValues+1
-  elseif t=='string' then stringValues=stringValues+1
-  else others=others+1 end
-  if n>=6500 then break end
+  if t=='table' then nt=nt+1 elseif t=='number' then nn=nn+1
+  elseif t=='string' then ns=ns+1 else no=no+1 end
+  if n>=limit then break end
  end
- return n,tableValues,numberValues,stringValues,others,(n>=6500)
+ return n,nt,nn,ns,no,n>=limit
 end
-local function traverse(deadline)
- while qi<=#queue and examined<MAX_NODES and tableKeysChecked<MAX_TABLE_KEYS
-       and not cancelled and os.clock()<deadline do
-  local node=queue[qi]; qi=qi+1
-  local v=node.v
-  if not visited[v] then
-   visited[v]=true
-   examined=examined+1
-   if type(v)=='function' then
-    functionCount=functionCount+1
-    if functionCount<=MAX_FUNCTION_UPVALUES and node.depth<MAX_DEPTH then
-     local ups=upvaluesOf(v)
+local categories={
+ 'Fish','Fishing Rods','Rods','Baits','Potions','Pets','Pet Eggs',
+ 'Gears','Lanterns','Halos','Emotes','Enchant Stones','Charms','Boats',
+ 'Items','Inventory','Inventories'
+}
+local function catSummary(t)
+ local arr={}
+ for _,name in ipairs(categories) do
+  local v=rawget(t,name)
+  if type(v)=='table' then
+   local n,tt,nn,ss,oo,cap=safeCount(v,2000)
+   arr[#arr+1]=name..'='..n..(cap and '+' or '')..'(T/N/S/O '..tt..'/'..nn..'/'..ss..'/'..oo..')'
+  end
+ end
+ return arr
+end
+local function safeChannel(ch)
+ if type(ch)~='string' then return '(type='..type(ch)..')' end
+ local approved={Data=true,PlayerData=true,Inventory=true,Player=true,Stats=true,Profile=true,Fish=true,Items=true}
+ if approved[ch] then return ch end
+ return '(redacted string channel)'
+end
+local function upvaluesOf(fn)
+ if type(getupvalues)=='function' then
+  local ok,x=pcall(getupvalues,fn)
+  if ok and type(x)=='table' then return x end
+ end
+ if type(debug)=='table' and type(debug.getupvalues)=='function' then
+  local ok,x=pcall(debug.getupvalues,fn)
+  if ok and type(x)=='table' then return x end
+ end
+ return nil
+end
+local targets={
+ 'ReplicatedStorage.Packages.Replion',
+ 'ReplicatedStorage.Packages._Index.ytrev_replion@2.0.0-rc.3.replion.Client',
+ 'ReplicatedStorage.Packages._Index.ytrev_replion@2.0.0-rc.3.replion.Client.ClientReplion',
+ 'ReplicatedStorage.Controllers.InventoryController'
+}
+local refs={}; local queue={}; local head=1
+local visited=setmetatable({},{__mode='k'})
+local inspected=0; local keys=0; local functions=0
+local results={}; local uniqueChannels={}
+local MAX_NODES=1650; local MAX_KEYS=11200; local MAX_DEPTH=6
+local MAX_FUNCTION_UPS=210; local MAX_QUEUE=5400
+local function enqueue(v,path,depth)
+ if (type(v)=='table' or type(v)=='function') and #queue<MAX_QUEUE and not visited[v] then
+  queue[#queue+1]={v=v,path=path,depth=depth}
+ end
+end
+local function recordCandidate(path,t)
+ local isData=type(rawget(t,'Data'))=='table'
+ local isReplion=isData and (rawget(t,'Channel')~=nil or rawget(t,'Tags')~=nil or type(rawget(t,'Get'))=='function')
+ local cats=catSummary(t)
+ if isReplion or #cats>=2 then
+  if #results>=38 then return end
+  local data=isData and rawget(t,'Data') or nil
+  local dataCats=data and catSummary(data) or {}
+  local n=select(1,safeCount(t,250))
+  local record={path=path,kind=isReplion and 'CLIENT-REPLION-LIKE' or 'CATEGORY-MAP',size=n,
+                cats=cats,dataCats=dataCats,channel=safeChannel(rawget(t,'Channel'))}
+  results[#results+1]=record
+  if isReplion then uniqueChannels[record.channel]=true end
+ end
+end
+local function run()
+ emit('KIMS V17 | REPLION SOURCE INSPECTOR | READ ONLY')
+ emit('PlaceId='..tostring(game.PlaceId))
+ emit('Focus: already-loaded Replion client and replicated-state metadata.')
+ emit('No Zetsu, HTTP, getgc, remote, item actions or raw account data.')
+ emit('Channel values redacted except standard names. No item values printed.')
+ emit('')
+ emit('=== EXACT LOADED MODULES ===')
+ if type(getloadedmodules)~='function' then
+  emit('getloadedmodules unavailable: cannot safely locate cached exports.')
+  return
+ end
+ local ok,loaded=pcall(getloadedmodules)
+ if not ok or type(loaded)~='table' then emit('getloadedmodules failed');return end
+ local count=0
+ for _,m in ipairs(loaded) do
+  if typeof(m)=='Instance' and m:IsA('ModuleScript') then
+   local op,full=pcall(function() return m:GetFullName() end)
+   if op then
+    for _,target in ipairs(targets) do
+     if full==target then refs[target]=m end
+    end
+   end
+  end
+  count=count+1
+  if count%450==0 then task.wait() end
+ end
+ emit('Loaded modules='..count)
+ local readable=0
+ for _,target in ipairs(targets) do
+  local module=refs[target]
+  if module then
+   -- Only already-loaded module instances; require should hit cache.
+   local worked,ex=pcall(require,module)
+   emit('MODULE '..target..' => '..(worked and type(ex) or 'unavailable'))
+   if worked then
+    readable=readable+1
+    enqueue(ex, target=='ReplicatedStorage.Controllers.InventoryController' and 'InventoryController/[export]' or 'Replion/[export]',0)
+    if type(ex)=='table' then
+     local client=rawget(ex,'Client')
+     if type(client)=='table' then
+      emit('  Client export found; GetReplion='..type(rawget(client,'GetReplion')))
+      enqueue(client,'Replion/Client',0)
+     end
+     if type(rawget(ex,'GetReplion'))=='function' then
+      emit('  GetReplion function present (not called).')
+     end
+    end
+   end
+  else
+   emit('MODULE '..target..' => not loaded')
+  end
+ end
+ emit('Cached module exports read='..readable)
+ show()
+ local deadline=os.clock()+12
+ emit('')
+ emit('=== BOUNDED CLIENT STATE GRAPH ===')
+ while head<=#queue and not cancel and inspected<MAX_NODES and keys<MAX_KEYS
+      and os.clock()<deadline do
+  local node=queue[head]; head=head+1
+  local obj=node.v
+  if not visited[obj] then
+   visited[obj]=true; inspected=inspected+1
+   if type(obj)=='function' then
+    functions=functions+1
+    if functions<=MAX_FUNCTION_UPS and node.depth<MAX_DEPTH then
+     local ups=upvaluesOf(obj)
      if ups then
-      local ct=0
-      for k,uv in pairs(ups) do
-       ct=ct+1
-       if ct>16 then break end
-       if type(uv)=='table' or type(uv)=='function' then
-        local nm=low(k)
-        local hint=(stateKeys[nm] and '/'..showKey(k)) or '/[upvalue]'
-        enqueue(uv,node.source,node.path..hint,node.depth+1)
-       end
+      local localN=0
+      for _,v in pairs(ups) do
+       localN=localN+1
+       if localN>12 then break end
+       enqueue(v,node.path..'/[upvalue]',node.depth+1)
       end
      end
     end
    else
-    local cat={}
-    local states={}
-    local child=0
-    for k,cv in pairs(v) do
-     tableKeysChecked=tableKeysChecked+1
-     child=child+1
-     local lk=low(k)
-     if collectionKeys[lk] and type(cv)=='table' then
-      local n,t,nn,s,o,capped=summarizeCollection(cv)
-      cat[#cat+1]={name=clean(k,32),n=n,t=t,num=nn,str=s,other=o,capped=capped}
+    recordCandidate(node.path,obj)
+    local processed=0
+    for k,v in pairs(obj) do
+     processed=processed+1;keys=keys+1
+     local isImportant=(k=='Data' or k=='Replions' or k=='Replion' or k=='Inventory' or k=='Items'
+         or k=='Client' or k=='State' or k=='Registry')
+     local part=isImportant and tostring(k) or '[entry]'
+     if node.depth<MAX_DEPTH and (processed<=34 or isImportant) then
+      enqueue(v,node.path..'/'..part,node.depth+1)
      end
-     if stateKeys[lk] then
-      states[#states+1]=clean(k,32)..':'..type(cv)
-     end
-     if type(cv)=='function' and (functionsOfInterest[lk] or lk:find('inventory',1,true) or lk:find('playerdata',1,true)) then
-      local hint=node.source..' '..clean(k,55)
-      if not seenHints[hint] and #getterNames<28 then
-       getterNames[#getterNames+1]=hint
-       seenHints[hint]=true
-      end
-     end
-     if child<=42 and node.depth<MAX_DEPTH then
-      enqueue(cv,node.source,node.path..'/'..showKey(k),node.depth+1)
-     end
-     if child>=95 or tableKeysChecked>=MAX_TABLE_KEYS then break end
-    end
-    if (#cat>0 or #states>=2) and #candidates<MAX_RESULTS then
-     local score=#cat*4+#states*2
-     if node.source:lower():find('playerdata',1,true) then score=score+3 end
-     if node.source:lower():find('waitforplayerdata',1,true) then score=score+3 end
-     candidates[#candidates+1]={score=score,source=node.source,path=node.path,cat=cat,states=states}
+     if processed>=110 or keys>=MAX_KEYS then break end
     end
    end
+   if inspected%40==0 then
+    status.Text='Memeriksa '..inspected..' objek...'
+    task.wait()
+   end
   end
-  if examined%55==0 then task.wait() end
  end
-end
-
-local function run()
- say('KIMS V16 | PLAYERDATA SOURCE TRACE | READ ONLY')
- say('PlaceId='..tostring(game.PlaceId))
- say('GOAL: locate client PlayerData / state / inventory source paths.')
- say('No Zetsu loader, no HTTP, no getgc, no remotes, no game getter calls.')
- say('Only metadata + counts; no item names, user data or credentials.')
- say('')
- say('=== LOADED PLAYERDATA / INVENTORY MODULES ===')
- if type(getloadedmodules)~='function' then
-  say('getloadedmodules unavailable. Unable to inspect cached module exports.')
-  return
- end
- local ok,mods=pcall(getloadedmodules)
- if not ok or type(mods)~='table' then
-  say('getloadedmodules failed. No data source claimed.')
-  return
- end
- baselineCount=#mods
- local matches={}
- for i,mod in ipairs(mods) do
-  if typeof(mod)=='Instance' and mod:IsA('ModuleScript') then
-   local p=safePath(mod)
-   local score=moduleRank(p)
-   if score>0 then matches[#matches+1]={obj=mod,path=p,score=score} end
-  end
-  if i%350==0 then task.wait() end
- end
- table.sort(matches,function(a,b)
-  if a.score~=b.score then return a.score>b.score end
-  return a.path<b.path
+ emit('Inspected='..inspected..' | fields='..keys..' | functions='..functions)
+ emit('Candidates='..#results..' | graph bounded='..tostring(head<=#queue))
+ if os.clock()>=deadline then emit('Time limit reached; report may be partial.') end
+ emit('')
+ emit('=== STATE / REPLION CANDIDATES ===')
+ if #results==0 then emit('No Replion-shaped table located in bounded graph.') end
+ table.sort(results,function(a,b)
+  local sa=(a.kind=='CLIENT-REPLION-LIKE' and 10 or 0)+#a.cats+#a.dataCats
+  local sb=(b.kind=='CLIENT-REPLION-LIKE' and 10 or 0)+#b.cats+#b.dataCats
+  return sa>sb
  end)
- say('Loaded='..baselineCount..' | targeted paths='..#matches)
- for i=1,math.min(#matches,32) do
-  say('TARGET '..i..' score='..matches[i].score..' '..matches[i].path)
- end
- if #matches>32 then say('...more targeted paths omitted from text.') end
- refresh()
- local total=math.min(#matches,MAX_MODULES)
- local attempted,readable=0,0
- local deadline=os.clock()+CPU_SECONDS
- say('')
- say('=== CACHED EXPORT + UPVALUE MAP ===')
- for i=1,total do
-  if cancelled or os.clock()>deadline then break end
-  local target=matches[i]
-  status.Text='Memeriksa modul '..i..'/'..total
-  attempted=attempted+1
-  -- Because this module is already in getloadedmodules(), require normally returns
-  -- a cached export. Not guaranteed on every modified executor / game runtime.
-  local okReq,export=pcall(require,target.obj)
-  if not okReq then
-   say('MODULE '..clean(target.path,90)..' => inaccessible')
-  else
-   readable=readable+1
-   say('MODULE '..clean(target.path,95)..' => '..type(export))
-   enqueue(export,target.path,'[export]',0)
+ for i=1,math.min(#results,22) do
+  local r=results[i]
+  emit('C'..i..' '..r.kind..' path='..r.path:sub(1,116)..' | channel='..r.channel)
+  if #r.cats>0 then
+   for j=1,math.min(#r.cats,9) do emit('  '..r.cats[j]) end
   end
-  if i%3==0 then refresh() end
-  task.wait()
- end
- traverse(deadline)
- say('Modules read='..readable..'/'..attempted)
- say('Graph nodes='..examined..' | functions='..functionCount..' | fields checked='..tableKeysChecked)
- if qi<=#queue then say('LIMIT: remaining nodes unexamined (bounded).') end
- say('')
- say('=== POTENTIAL GETTERS (NAMES ONLY - NOT CALLED) ===')
- if #getterNames==0 then say('No named getters identified in inspected exports.') end
- table.sort(getterNames)
- for i=1,math.min(#getterNames,25) do say('GETTER '..getterNames[i]) end
- say('')
- say('=== CLIENT STATE / CATEGORY SHAPES ===')
- table.sort(candidates,function(a,b) return a.score>b.score end)
- if #candidates==0 then say('No candidate state table shape identified in bounded inspection.') end
- for i=1,math.min(#candidates,18) do
-  local c=candidates[i]
-  say('C'..i..' score='..c.score..' module='..clean(c.source,110))
-  say('  path='..clean(c.path,130))
-  if #c.states>0 then say('  keys='..table.concat(c.states,', ',1,math.min(#c.states,10))) end
-  for j=1,math.min(#c.cat,9) do
-   local d=c.cat[j]
-   say('  '..d.name..': entries='..d.n..(d.capped and '+' or '')..' values[T/N/S/O]='..d.t..'/'..d.num..'/'..d.str..'/'..d.other)
+  if #r.dataCats>0 then
+   emit('  [Data children]')
+   for j=1,math.min(#r.dataCats,9) do emit('    '..r.dataCats[j]) end
   end
  end
- say('')
- say('=== AUDIT ===')
- say('Ownership NOT VERIFIED. Category counts are not inventory quantities.')
- say('A data-shaped table might be configuration, catalog, or GUI state.')
- say('V14 GUI counters remain the only verified totals; not read here.')
- say('Next analysis: link named getter/state path to owned-item record shape.')
- say('Never send Zetsu API keys, headers or raw request payloads.')
+ emit('')
+ emit('=== INTERPRETATION ===')
+ emit('Replion framework is confirmed; no candidate is yet verified as owned inventory.')
+ emit('Fish category entries can be species/statistics, NOT fish quantity.')
+ emit('A true item source needs record shape plus consistency with GUI counter.')
+ emit('Do not use candidate totals to populate kims.asia/statakun.')
+ emit('No sensitive strings, credentials, item details or payloads exported.')
 end
-
-local function copyReport()
- if busy then status.Text='Tunggu proses selesai';return end
- local fn=(type(setclipboard)=='function' and setclipboard) or
-          (type(toclipboard)=='function' and toclipboard)
- if not fn then status.Text='Clipboard tidak didukung';return end
- local ok=pcall(fn,table.concat(lines,'\n'))
- status.Text=ok and 'Laporan tersalin - kirim ke chat' or 'Gagal menyalin'
-end
-copyBtn.MouseButton1Click:Connect(copyReport)
-local minimized=false
+copyBtn.MouseButton1Click:Connect(function()
+ if busy then status.Text='Tunggu SELESAI dulu';return end
+ local clip=type(setclipboard)=='function' and setclipboard or (type(toclipboard)=='function' and toclipboard)
+ if not clip then status.Text='Clipboard unsupported';return end
+ local ok=pcall(clip,table.concat(lines,'\n'))
+ status.Text=ok and 'Laporan tersalin' or 'SALIN gagal'
+end)
+local mini=false
 miniBtn.MouseButton1Click:Connect(function()
- minimized=not minimized
- if minimized then
-  sc.Visible=false
-  panel.Size=UDim2.new(.94,0,0,112)
-  miniBtn.Text='BUKA'
- else
-  panel.Size=UDim2.new(.94,0,.68,0)
-  sc.Visible=true
-  miniBtn.Text='MINI'
- end
+ mini=not mini
+ sc.Visible=not mini
+ pane.Size=mini and UDim2.new(.94,0,0,112) or UDim2.new(.94,0,.68,0)
+ miniBtn.Text=mini and 'BUKA' or 'MINI'
 end)
-closeBtn.MouseButton1Click:Connect(function()
- cancelled=true
- screen:Destroy()
-end)
--- Touch/mouse dragging.
+closeBtn.MouseButton1Click:Connect(function() cancel=true;screen:Destroy() end)
 do
- local dragging=false
- local startPos=nil
- local original=nil
- title.InputBegan:Connect(function(input)
-  if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseButton1 then
-   dragging=true;startPos=input.Position;original=panel.Position
+ local dragging=false;local start;local origin
+ headline.InputBegan:Connect(function(x)
+  if x.UserInputType==Enum.UserInputType.Touch or x.UserInputType==Enum.UserInputType.MouseButton1 then
+   dragging=true;start=x.Position;origin=pane.Position
   end
  end)
- title.InputEnded:Connect(function(input)
-  if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end
+ headline.InputEnded:Connect(function(x)
+  if x.UserInputType==Enum.UserInputType.Touch or x.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end
  end)
- UserInputService.InputChanged:Connect(function(input)
-  if cancelled or not dragging or not startPos then return end
-  if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseMovement then
-   local delta=input.Position-startPos
-   panel.Position=UDim2.new(original.X.Scale,original.X.Offset+delta.X,original.Y.Scale,original.Y.Offset+delta.Y)
+ UIS.InputChanged:Connect(function(x)
+  if cancel or not dragging or not start then return end
+  if x.UserInputType==Enum.UserInputType.Touch or x.UserInputType==Enum.UserInputType.MouseMovement then
+   local d=x.Position-start
+   pane.Position=UDim2.new(origin.X.Scale,origin.X.Offset+d.X,origin.Y.Scale,origin.Y.Offset+d.Y)
   end
  end)
 end
-refresh()
+show()
 task.spawn(function()
- local success,err=pcall(run)
+ local good,err=pcall(run)
  busy=false
- if not cancelled then
-  if not success then say('ERROR: '..clean(err,140)) end
-  refresh()
-  status.Text=success and 'SELESAI - tekan SALIN' or 'ERROR - tekan SALIN'
+ if not cancel then
+  if not good then emit('ERROR: '..tostring(err):sub(1,130)) end
+  show()
+  status.Text=good and 'SELESAI - tekan SALIN' or 'ERROR - tekan SALIN'
  end
 end)
