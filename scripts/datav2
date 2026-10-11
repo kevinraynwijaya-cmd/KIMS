@@ -1,4 +1,4 @@
--- KIMS INVENTORY PROBE V3 — read-only, local-only, no networking.
+-- KIMS INVENTORY PROBE V3.1 — read-only, local-only, no networking.
 -- Use only on an account you own or are authorized to inspect.
 local Players = game:GetService('Players')
 local RS = game:GetService('ReplicatedStorage')
@@ -16,13 +16,19 @@ main.Size=UDim2.new(0.88,0,0.7,0);main.Position=UDim2.new(.06,0,.14,0)
 main.BackgroundColor3=Color3.fromRGB(16,21,39);main.BorderSizePixel=0;main.Parent=gui
 Instance.new('UICorner',main).CornerRadius=UDim.new(0,12)
 local limit=Instance.new('UISizeConstraint',main);limit.MaxSize=Vector2.new(650,580)
-local header=Instance.new('TextLabel');header.Size=UDim2.new(1,-110,0,44);header.Position=UDim2.new(0,12,0,4)
+local header=Instance.new('TextLabel');header.Size=UDim2.new(1,-210,0,44);header.Position=UDim2.new(0,12,0,4)
 header.BackgroundTransparency=1;header.TextColor3=Color3.fromRGB(151,213,255)
 header.Font=Enum.Font.GothamBold;header.TextSize=16;header.TextXAlignment=Enum.TextXAlignment.Left
-header.Text='KIMS FISH READER V3 • LOCAL TEST';header.Parent=main
+header.Text='KIMS READER V3.1 • COPY';header.Parent=main
 local close=Instance.new('TextButton');close.Size=UDim2.fromOffset(80,34);close.Position=UDim2.new(1,-88,0,8)
 close.BackgroundColor3=Color3.fromRGB(82,45,91);close.Text='TUTUP';close.TextColor3=Color3.new(1,1,1);close.Parent=main
 close.MouseButton1Click:Connect(function() gui:Destroy() end)
+local copyBtn=Instance.new('TextButton')
+copyBtn.Size=UDim2.fromOffset(93,34);copyBtn.Position=UDim2.new(1,-190,0,8)
+copyBtn.BackgroundColor3=Color3.fromRGB(38,121,100);copyBtn.Text='SALIN HASIL'
+copyBtn.TextColor3=Color3.new(1,1,1);copyBtn.TextSize=12;copyBtn.Font=Enum.Font.GothamBold
+copyBtn.Parent=main
+Instance.new('UICorner',copyBtn).CornerRadius=UDim.new(0,6)
 local scroll=Instance.new('ScrollingFrame');scroll.Size=UDim2.new(1,-24,1,-70);scroll.Position=UDim2.fromOffset(12,57)
 scroll.BackgroundColor3=Color3.fromRGB(23,30,50);scroll.BorderSizePixel=0;scroll.ScrollBarThickness=5;scroll.Parent=main
 local txt=Instance.new('TextLabel');txt.Size=UDim2.new(1,-14,0,100);txt.Position=UDim2.fromOffset(7,6)
@@ -75,6 +81,39 @@ local report=table.concat(lines,'\n')
 txt.Text=report
 txt.Size=UDim2.new(1,-14,0,math.max(120,#lines*19))
 scroll.CanvasSize=UDim2.new(0,0,0,math.max(130,#lines*19+20))
+-- Copy is local-only. No HTTP requests and no uploading any result.
+copyBtn.MouseButton1Click:Connect(function()
+ local clipboardFn
+ if type(setclipboard)=='function' then clipboardFn=setclipboard
+ elseif type(toclipboard)=='function' then clipboardFn=toclipboard end
+ if clipboardFn then
+  local ok=pcall(function() clipboardFn(report) end)
+  if ok then
+   copyBtn.Text='TERSALIN!'
+   return
+  end
+ end
+ -- Some executors have no clipboard API. Show selectable text instead.
+ copyBtn.Text='SALIN MANUAL'
+ local existing=gui:FindFirstChild('CopyFallback')
+ if existing then existing:Destroy() end
+ local overlay=Instance.new('Frame');overlay.Name='CopyFallback'
+ overlay.Size=UDim2.new(1,-20,1,-68);overlay.Position=UDim2.fromOffset(10,57)
+ overlay.BackgroundColor3=Color3.fromRGB(19,24,43);overlay.ZIndex=5;overlay.Parent=main
+ local help=Instance.new('TextLabel');help.Size=UDim2.new(1,-12,0,48);help.Position=UDim2.fromOffset(6,3)
+ help.TextWrapped=true;help.BackgroundTransparency=1;help.TextColor3=Color3.new(1,1,1)
+ help.Font=Enum.Font.Gotham;help.TextSize=12;help.ZIndex=6
+ help.Text='Clipboard tidak tersedia. Ketuk teks, pilih semua, lalu salin manual.';help.Parent=overlay
+ local field=Instance.new('TextBox');field.Size=UDim2.new(1,-12,1,-93);field.Position=UDim2.fromOffset(6,55)
+ field.Text=report;field.MultiLine=true;field.ClearTextOnFocus=false;field.TextEditable=true
+ field.TextWrapped=false;field.TextXAlignment=Enum.TextXAlignment.Left;field.TextYAlignment=Enum.TextYAlignment.Top
+ field.TextColor3=Color3.fromRGB(236,245,255);field.BackgroundColor3=Color3.fromRGB(32,40,65)
+ field.Font=Enum.Font.Code;field.TextSize=12;field.ZIndex=6;field.Parent=overlay
+ local back=Instance.new('TextButton');back.Size=UDim2.new(1,-12,0,30);back.Position=UDim2.new(0,6,1,-34)
+ back.Text='KEMBALI KE HASIL';back.TextColor3=Color3.new(1,1,1)
+ back.BackgroundColor3=Color3.fromRGB(69,56,114);back.ZIndex=6;back.Parent=overlay
+ back.MouseButton1Click:Connect(function() overlay:Destroy();copyBtn.Text='SALIN HASIL' end)
+end)
 -- Drag panel by its header, convenient for mobile executor environments.
 local dragging,origin,startPos=false,nil,nil
 header.InputBegan:Connect(function(input)
