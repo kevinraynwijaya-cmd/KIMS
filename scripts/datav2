@@ -1,144 +1,166 @@
--- KIMS FISH READER V6.1 FIX — LIGHT MANUAL SCAN
--- Read-only. Does not upload, alter inventory, fire remotes, or scroll automatically.
+-- KIMS UNIVERSAL INVENTORY PROBE V7
+-- Read only. No HTTP, uploads, RemoteEvent calls, auto scroll, or inventory modification.
+-- Uses only visible Roblox Instance data. Designed for Delta Android GUI output.
 local Players = game:GetService('Players')
 local player = Players.LocalPlayer
 local pg = player:WaitForChild('PlayerGui')
-local gui = pg:FindFirstChild('Inventory')
-local old = pg:FindFirstChild('KIMSReaderV61')
+local old = pg:FindFirstChild('KIMSUniversalV7')
 if old then old:Destroy() end
 local screen = Instance.new('ScreenGui')
-screen.Name = 'KIMSReaderV61'; screen.ResetOnSpawn = false
-screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screen.Parent = pg
-local main = Instance.new('Frame')
-main.Size = UDim2.new(0.90,0,0.71,0); main.Position = UDim2.new(.05,0,.13,0)
-main.BackgroundColor3 = Color3.fromRGB(12,17,34); main.BorderSizePixel=0; main.Parent=screen
-Instance.new('UICorner', main).CornerRadius=UDim.new(0,12)
-local stroke=Instance.new('UIStroke',main); stroke.Color=Color3.fromRGB(108,91,225); stroke.Thickness=2
-local title=Instance.new('TextLabel',main)
-title.BackgroundTransparency=1; title.Position=UDim2.new(.025,0,.015,0); title.Size=UDim2.new(.95,0,0,30)
-title.Font=Enum.Font.GothamBold; title.TextSize=16; title.TextColor3=Color3.fromRGB(190,180,255)
-title.TextXAlignment=Enum.TextXAlignment.Left; title.Text='KIMS READER V6.1 FIX | MANUAL SCAN'
-local function button(name,x,w)
- local b=Instance.new('TextButton',main); b.Size=UDim2.new(w,0,0,32); b.Position=UDim2.new(x,0,0,44)
- b.Text=name; b.TextScaled=true; b.Font=Enum.Font.GothamBold
- b.TextColor3=Color3.new(1,1,1); b.BackgroundColor3=Color3.fromRGB(64,57,119)
- Instance.new('UICorner',b).CornerRadius=UDim.new(0,6); return b
+screen.Name='KIMSUniversalV7';screen.ResetOnSpawn=false
+screen.ZIndexBehavior=Enum.ZIndexBehavior.Sibling;screen.Parent=pg
+local main=Instance.new('Frame')
+main.Size=UDim2.new(.94,0,.76,0);main.Position=UDim2.new(.03,0,.10,0)
+main.BackgroundColor3=Color3.fromRGB(12,17,34);main.BorderSizePixel=0;main.Parent=screen
+Instance.new('UICorner',main).CornerRadius=UDim.new(0,12)
+local border=Instance.new('UIStroke',main);border.Color=Color3.fromRGB(108,91,225);border.Thickness=2
+local function label(parent,text,pos,size,color)
+ local t=Instance.new('TextLabel');t.BackgroundTransparency=1;t.Position=pos;t.Size=size
+ t.Text=text;t.Font=Enum.Font.Code;t.TextSize=12;t.TextColor3=color or Color3.fromRGB(228,236,255)
+ t.TextXAlignment=Enum.TextXAlignment.Left;t.TextYAlignment=Enum.TextYAlignment.Top;t.Parent=parent;return t
 end
-local scanBtn=button('SCAN',.025,.19)
-local copyBtn=button('SALIN',.23,.19)
-local clearBtn=button('RESET',.435,.19)
-local closeBtn=button('TUTUP',.64,.18)
-local counter=Instance.new('TextLabel',main)
-counter.Position=UDim2.new(.025,0,0,83); counter.Size=UDim2.new(.95,0,0,24)
-counter.BackgroundTransparency=1; counter.Font=Enum.Font.Code; counter.TextSize=13
-counter.TextXAlignment=Enum.TextXAlignment.Left; counter.TextColor3=Color3.fromRGB(110,226,165)
-local sc=Instance.new('ScrollingFrame',main)
-sc.Size=UDim2.new(.95,0,1,-119); sc.Position=UDim2.new(.025,0,0,112)
-sc.BackgroundColor3=Color3.fromRGB(20,27,46); sc.BorderSizePixel=0
-sc.ScrollBarThickness=7; sc.AutomaticCanvasSize=Enum.AutomaticSize.Y
-local content=Instance.new('TextLabel',sc)
-content.BackgroundTransparency=1; content.Size=UDim2.new(1,-12,0,0)
-content.AutomaticSize=Enum.AutomaticSize.Y; content.TextWrapped=true
-content.TextXAlignment=Enum.TextXAlignment.Left; content.TextYAlignment=Enum.TextYAlignment.Top
-content.Font=Enum.Font.Code; content.TextSize=12; content.TextColor3=Color3.fromRGB(228,236,255)
-local layout=Instance.new('UIPadding',sc); layout.PaddingTop=UDim.new(0,6); layout.PaddingLeft=UDim.new(0,6)
-local log={}; local signatures={}; local signatureCount=0; local observations=0; local scans=0
-local invScroll
-if gui then
- local pages=gui:FindFirstChild('Main')
- pages=pages and pages:FindFirstChild('Content')
- pages=pages and pages:FindFirstChild('Pages')
- pages=pages and pages:FindFirstChild('Inventory2')
- pages=pages and pages:FindFirstChild('Main')
- invScroll=pages and pages:FindFirstChild('Inventory')
+local title=label(main,'KIMS UNIVERSAL INVENTORY V7',UDim2.new(.02,0,.018,0),UDim2.new(.96,0,0,26),Color3.fromRGB(190,180,255))
+title.Font=Enum.Font.GothamBold;title.TextSize=15
+local function button(txt,x,width)
+ local b=Instance.new('TextButton');b.Text=txt;b.Font=Enum.Font.GothamBold;b.TextScaled=true
+ b.TextColor3=Color3.new(1,1,1);b.BackgroundColor3=Color3.fromRGB(64,57,119)
+ b.Position=UDim2.new(x,0,0,39);b.Size=UDim2.new(width,0,0,34);b.Parent=main
+ Instance.new('UICorner',b).CornerRadius=UDim.new(0,6);return b
 end
-local function val(label)
- if not label or not label:IsA('TextLabel') then return '' end
- return tostring(label.Text or ''):gsub('[\r\n|]',' '):gsub('^%s+',''):gsub('%s+$','')
+local scanBtn=button('SCAN',.02,.22)
+local copyBtn=button('SALIN',.26,.22)
+local closeBtn=button('TUTUP',.50,.22)
+local state=label(main,'Siap. Buka Inventory lalu tekan SCAN.',UDim2.new(.02,0,0,82),UDim2.new(.96,0,0,22),Color3.fromRGB(110,226,165))
+local scroll=Instance.new('ScrollingFrame');scroll.Parent=main
+scroll.Position=UDim2.new(.02,0,0,107);scroll.Size=UDim2.new(.96,0,1,-115)
+scroll.BackgroundColor3=Color3.fromRGB(20,27,46);scroll.BorderSizePixel=0
+scroll.ScrollBarThickness=6;scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+local out=label(scroll,'Press SCAN',UDim2.new(0,6,0,6),UDim2.new(1,-20,0,0))
+out.AutomaticSize=Enum.AutomaticSize.Y;out.TextWrapped=true
+local inv=pg:FindFirstChild('Inventory')
+local report='';local scanCount=0;local busy=false
+local function clean(s)
+ return tostring(s or ''):gsub('[\r\n|]',' '):gsub('^%s+',''):gsub('%s+$',''):sub(1,100)
 end
-local function active(o)
- local n=o
- while n and n~=invScroll do
-  if n:IsA('GuiObject') and not n.Visible then return false end
-  n=n.Parent
+local function parentVisible(obj,root)
+ local p=obj
+ while p and p~=root do
+  if p:IsA('GuiObject') and not p.Visible then return false end
+  p=p.Parent
  end
  return true
 end
-local function itemEntry(label)
- local tile=label.Parent
- while tile and tile.Parent~=invScroll do tile=tile.Parent end
- if not tile or not active(tile) then return nil end
- local name=val(label)
- if name=='' or name=='ItemName' then return nil end
- local weight=''; local variant=''; local id=''
- for _,d in ipairs(tile:GetDescendants()) do
-  if d:IsA('TextLabel') then
-   local t=val(d)
-   if weight=='' and t:find('kg',1,true) then weight=t end
-   if variant=='' and d~=label and d.Name=='ItemName' and d.Parent and d.Parent.Name=='Variant' then variant=t end
-  end
+local function attributeNames(obj)
+ local attrs=obj:GetAttributes();local keys={}
+ for k in pairs(attrs) do table.insert(keys,k) end
+ table.sort(keys)
+ if #keys>12 then
+  local few={};for i=1,12 do few[i]=keys[i] end
+  return table.concat(few,',')..' ... ('..#keys..')'
  end
- for _,a in ipairs({'UUID','UID','Id','ItemId','Guid'}) do
-  local v=tile:GetAttribute(a)
-  if v~=nil then id=tostring(v); break end
- end
- return name,weight,variant,id
+ return table.concat(keys,',')
 end
-local function render()
- counter.Text='SCAN '..scans..'  |  TERAMATI '..observations..'  |  SIGNATURE UNIK '..signatureCount
- local header='KIMS V6.1 | READ ONLY | NO UPLOAD\nUSER: @'..player.Name..' | Display: '..player.DisplayName..' | UserId: '..player.UserId..'\n'
- local ls=player:FindFirstChild('leaderstats')
- if ls then
-  for _,name in ipairs({'Caught','Rarest Fish'}) do
-   local v=ls:FindFirstChild(name)
-   if v and v:IsA('ValueBase') then header=header..name..': '..tostring(v.Value)..'\n' end
+local function descendantsLimited(root,maxCount)
+ local found={};local queue={root};local head=1
+ while head<=#queue and #found<maxCount do
+  local node=queue[head];head=head+1
+  for _,ch in ipairs(node:GetChildren()) do
+   if #found>=maxCount then break end
+   found[#found+1]=ch
+   if #queue<maxCount+1 then queue[#queue+1]=ch end
   end
  end
- header=header..'INV SCROLL: '..(invScroll and invScroll:GetFullName() or 'NOT FOUND')..'\n'
- header=header..'INFO: Scan MANUAL setelah scroll, signature unik bukan total ikan.\n'
- local from=math.max(1,#log-185)
- content.Text=header..'--- ITEM TERAMATI ---\n'..table.concat(log,'\n',from)
+ return found,head<=#queue
+end
+local function shortPath(o)
+ local s={};local n=o
+ while n and n~=inv and #s<8 do table.insert(s,1,n.Name);n=n.Parent end
+ return table.concat(s,'/')
 end
 local function scan()
- scans=scans+1
- if not invScroll then table.insert(log,'[ERROR] Inventory2.Main.Inventory tidak ditemukan. Buka inventory game.');render();return end
- local current=0; local new=0
- local processed=0
- for _,d in ipairs(invScroll:GetDescendants()) do
-  processed=processed+1
-  if processed>4500 then break end
-  if d:IsA('TextLabel') and d.Name=='ItemName' and (not d.Parent or d.Parent.Name~='Variant') then
-   local name,weight,variant,id=itemEntry(d)
-   if name then
-    current=current+1
-    local sig=table.concat({name,weight,variant,id},'|')
-    if not signatures[sig] then
-     signatures[sig]=true; signatureCount=signatureCount+1; new=new+1
-     observations=observations+1
-     table.insert(log,string.format('%03d | %s | weight=%s | variant=%s | id=%s',signatureCount,name,weight~='' and weight or '?',variant~='' and variant or '?',id~='' and id or '?'))
+ if busy then return end
+ busy=true;scanBtn.Text='TUNGGU';scanCount=scanCount+1
+ local lines={};local function add(s) lines[#lines+1]=s end
+ add('KIMS V7 | READ ONLY | NO UPLOAD')
+ add('USER @'..player.Name..' | DISPLAY '..player.DisplayName..' | ID '..tostring(player.UserId))
+ add('PLACE '..tostring(game.PlaceId)..' | SCAN '..scanCount)
+ local stats=player:FindFirstChild('leaderstats')
+ if stats then
+  for _,key in ipairs({'Caught','Rarest Fish'}) do
+   local v=stats:FindFirstChild(key)
+   if v and v:IsA('ValueBase') then add('STAT '..key..'='..tostring(v.Value)) end
+  end
+ end
+ inv=pg:FindFirstChild('Inventory')
+ if not inv then
+  add('[ERROR] PlayerGui.Inventory tidak ditemukan. Buka menu Inventory Fish It.')
+ else
+  add('INVENTORY GUI enabled='..tostring(inv.Enabled))
+  local nodes,truncated=descendantsLimited(inv,5500)
+  local frames={}
+  local pages={}
+  for _,node in ipairs(nodes) do
+   if node:IsA('ScrollingFrame') then frames[#frames+1]=node end
+   if node.Name=='Pages' then
+    for _,child in ipairs(node:GetChildren()) do
+     if child:IsA('GuiObject') then pages[#pages+1]=child.Name end
     end
    end
   end
+  add('GUI objects inspected='..#nodes..' | capped='..tostring(truncated))
+  add('PAGES: '..table.concat(pages,', '))
+  add('SCROLL FRAMES='..#frames..' (jumlah wadah, BUKAN jumlah item)')
+  local frameLimit=math.min(#frames,14)
+  for i=1,frameLimit do
+   local frame=frames[i]
+   local children=frame:GetChildren()
+   local titleText=shortPath(frame)
+   add('')
+   add('['..i..'] '..titleText)
+   add('  enabled/visible='..tostring(parentVisible(frame,inv))..' | direct children='..#children)
+   add('  canvas Y='..math.floor(frame.CanvasSize.Y.Offset)..' | scroll Y='..math.floor(frame.CanvasPosition.Y))
+   add('  attrs='..attributeNames(frame))
+   local samples={};local nameCount=0;local inspected=0
+   -- Probe a limited subtree. Never scan huge game-wide hierarchies.
+   local fNodes=descendantsLimited(frame,1250)
+   for _,n in ipairs(fNodes) do
+    inspected=inspected+1
+    if n:IsA('TextLabel') and n.Name=='ItemName' then
+     local t=clean(n.Text)
+     if t~='' and t~='ItemName' then
+      nameCount=nameCount+1
+      if #samples<5 then samples[#samples+1]=t end
+     end
+    end
+   end
+   add('  item labels='..nameCount..' | sample: '..(#samples>0 and table.concat(samples,' ; ') or '(belum terdeteksi)'))
+   -- Structural sample of direct children and their attribute keys, no sensitive values.
+   local distinct={};local keys={}
+   for _,n in ipairs(children) do
+    local key=n.ClassName..':'..n.Name
+    if not distinct[key] then distinct[key]=true;keys[#keys+1]=key end
+    if #keys>=8 then break end
+   end
+   add('  child types: '..table.concat(keys,' ; '))
+  end
+  if #frames>frameLimit then add('... '..(#frames-frameLimit)..' frame lainnya tidak diproses (batas keamanan)') end
+  add('')
+  add('NOTE: ini pemetaan GUI client, BUKAN dump database 213 ikan atau sumber inventory lengkap.')
+  add('NOTE: tanpa ID item/quantity sumber, tile atau signature tidak boleh dianggap jumlah ikan.')
  end
- if new>0 or scans==1 then table.insert(log,'[SCAN '..scans..'] tiles aktif='..current..' | signature baru='..new) end
- render()
+ report=table.concat(lines,'\n');out.Text=report
+ state.Text='SCAN '..scanCount..' selesai | '..#lines..' baris | '..#report..' karakter'
+ scanBtn.Text='SCAN';busy=false
 end
-scanBtn.MouseButton1Click:Connect(scan)
-copyBtn.MouseButton1Click:Connect(function()
- local data='KIMS V6.1 | READ ONLY\nUSER: @'..player.Name..' | UserId: '..player.UserId..'\n'
- local ls=player:FindFirstChild('leaderstats')
- if ls then for _,k in ipairs({'Caught','Rarest Fish'}) do local o=ls:FindFirstChild(k);if o and o:IsA('ValueBase') then data=data..k..'='..tostring(o.Value)..'\n' end end end
- data=data..'Scans='..scans..' | unique signatures='..signatureCount..' (NOT total items)\n'..table.concat(log,'\n')
- if type(setclipboard)=='function' then
-  local ok=pcall(setclipboard,data)
-  copyBtn.Text=ok and 'TERSALIN!' or 'GAGAL COPY'
- elseif type(toclipboard)=='function' then
-  local ok=pcall(toclipboard,data)
-  copyBtn.Text=ok and 'TERSALIN!' or 'GAGAL COPY'
- else copyBtn.Text='NO CLIPBOARD' end
+scanBtn.MouseButton1Click:Connect(function()
+ local ok,err=pcall(scan)
+ if not ok then busy=false;scanBtn.Text='SCAN';state.Text='SCAN ERROR: '..tostring(err):sub(1,110) end
 end)
-clearBtn.MouseButton1Click:Connect(function() signatures={};signatureCount=0;observations=0;scans=0;log={};scan() end)
+copyBtn.MouseButton1Click:Connect(function()
+ local clipboard=(type(setclipboard)=='function' and setclipboard) or (type(toclipboard)=='function' and toclipboard)
+ if not clipboard then copyBtn.Text='NO COPY';return end
+ local ok=pcall(clipboard,report)
+ copyBtn.Text=ok and 'TERSALIN' or 'GAGAL'
+end)
 closeBtn.MouseButton1Click:Connect(function() screen:Destroy() end)
-table.insert(log, '[SIAP] Buka inventory, scroll, tekan SCAN. Tidak ada scan otomatis.')
-render()
+out.Text='Buka menu INVENTORY Fish It dahulu.\nTekan SCAN untuk peta semua kategori yang tersedia.\nTidak perlu scroll ribuan ikan.\nTidak ada request atau perubahan data.'
