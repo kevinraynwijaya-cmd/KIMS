@@ -1,140 +1,79 @@
--- KIMS FISH READER V5 | Inventory Source Probe
--- Read only. No HTTP requests, no uploads, no inventory edits.
+-- KIMS FISH READER V6 — INVENTORY SCROLL CAPTURE
+-- Read-only. Does not upload, alter inventory, fire remotes, or scroll automatically.
 local Players = game:GetService('Players')
-local RS = game:GetService('ReplicatedStorage')
 local player = Players.LocalPlayer
-local gui = player:WaitForChild('PlayerGui')
-local lines = {}
-local function add(s) lines[#lines+1] = tostring(s) end
-local function clean(s) s=tostring(s or ''):gsub('[\r\n]',' '); return #s>110 and s:sub(1,110)..'...' or s end
-local function shortPath(obj)
-    local ok,s=pcall(function() return obj:GetFullName() end)
-    return ok and clean(s) or clean(obj.Name)
-end
-local words={'inventory','item','fish','data','profile','backpack','storage','caught','catch','rod','save','equipment'}
-local function relevant(name)
-    name=string.lower(name)
-    for _,w in ipairs(words) do if string.find(name,w,1,true) then return true end end
-    return false
-end
-local function listValues(root, title, cap)
-    if not root then add(title..': missing'); return end
-    local count,shown=0,0
-    for _,v in ipairs(root:GetDescendants()) do
-        if v:IsA('ValueBase') then
-            count=count+1
-            if shown<cap and (relevant(v.Name) or relevant(v.Parent and v.Parent.Name or '')) then
-                shown=shown+1
-                local ok,value=pcall(function() return v.Value end)
-                add('VALUE '..shortPath(v)..' = '..(ok and clean(value) or '[unavailable]'))
-            end
-        end
-    end
-    add(title..' ValueBase total='..count..' relevant shown='..shown)
-end
-local function attrScan(obj,title)
-    if not obj then return end
-    local ok,t=pcall(function() return obj:GetAttributes() end)
-    if not ok then return end
-    local n=0
-    for k,v in pairs(t) do
-        n=n+1
-        if relevant(k) then add('ATTR '..title..'.'..clean(k)..' = '..clean(v)) end
-    end
-    add(title..' attributes total='..n)
-end
-local function scanNamed(root,title,limit,depth)
-    local count,shown=0,0
-    if not root then return end
-    for _,obj in ipairs(root:GetDescendants()) do
-        if relevant(obj.Name) then
-            count=count+1
-            if shown<limit then
-                local path=shortPath(obj)
-                if not depth or #path<depth then
-                    shown=shown+1
-                    add('NODE ['..obj.ClassName..'] '..path)
-                end
-            end
-        end
-    end
-    add(title..' matches='..count..' displayed='..shown)
-end
-local function scanGui()
-    local inv=gui:FindFirstChild('Inventory')
-    add('=== INVENTORY GUI (not hotbar) ===')
-    if not inv then add('Inventory GUI not found'); return end
-    add('Root '..shortPath(inv)..' Enabled='..tostring(inv.Enabled))
-    local counts={Frame=0,ScrollingFrame=0,TextLabel=0,ImageButton=0}
-    local shown=0
-    for _,obj in ipairs(inv:GetDescendants()) do
-        if counts[obj.ClassName]~=nil then counts[obj.ClassName]=counts[obj.ClassName]+1 end
-        if obj:IsA('TextLabel') and obj.Visible and shown<45 then
-            local txt=clean(obj.Text)
-            if txt~='' and txt~='-' then
-                shown=shown+1
-                add('GUI TEXT '..shortPath(obj)..' => '..txt)
-            end
-        end
-    end
-    for k,n in pairs(counts) do add('Inventory GUI '..k..'='..n) end
-    add('Visible text shown='..shown)
-end
-local function run()
-    lines={}
-    add('KIMS V5 | SOURCE PROBE | READ ONLY | NO UPLOAD')
-    add('ACCOUNT @'..player.Name..' | Display='..player.DisplayName..' | UserId='..player.UserId)
-    add('Place='..game.PlaceId)
-    add('Please OPEN full Fish It Inventory before pressing RESCAN')
-    add('=== PLAYER STATE ===')
-    attrScan(player,'Player')
-    attrScan(player.Character,'Character')
-    listValues(player,'Player',35)
-    add('=== PLAYER / CLIENT OBJECTS ===')
-    scanNamed(player,'Player',55)
-    add('=== REPLICATED ROOT NAMES (not player inventory) ===')
-    local shown=0
-    for _,child in ipairs(RS:GetChildren()) do
-        if relevant(child.Name) and shown<45 then
-            shown=shown+1
-            add('RS ROOT ['..child.ClassName..'] '..clean(child.Name))
-        end
-    end
-    scanGui()
-    add('=== SUMMARY ===')
-    add('ReplicatedStorage.Items is normally item definitions, NOT proof of account ownership.')
-    add('This test checks client-visible state only; it does not retrieve server DataStore or catch history.')
-    add('DONE')
-end
-local old=gui:FindFirstChild('KIMS_V5_SOURCE_PROBE')
+local pg = player:WaitForChild('PlayerGui')
+local gui = pg:FindFirstChild('Inventory')
+local old = pg:FindFirstChild('KIMSReaderV6')
 if old then old:Destroy() end
-local sg=Instance.new('ScreenGui')
-sg.Name='KIMS_V5_SOURCE_PROBE'; sg.ResetOnSpawn=false; sg.IgnoreGuiInset=true
-pcall(function() sg.Parent=game:GetService('CoreGui') end)
-if not sg.Parent then sg.Parent=gui end
-local bg=Instance.new('Frame',sg); bg.Size=UDim2.fromScale(.86,.72); bg.Position=UDim2.fromScale(.07,.13); bg.BackgroundColor3=Color3.fromRGB(13,17,32); bg.BorderSizePixel=0
-Instance.new('UICorner',bg).CornerRadius=UDim.new(0,12)
-local header=Instance.new('TextLabel',bg); header.Text='KIMS FISH READER V5 - INVENTORY SOURCE';header.TextColor3=Color3.fromRGB(170,214,255);header.Font=Enum.Font.GothamBold;header.TextSize=14;header.BackgroundTransparency=1;header.Size=UDim2.new(.60,0,0,40)
-local function button(label,x,w,fn)
- local b=Instance.new('TextButton',bg);b.Text=label;b.Font=Enum.Font.GothamBold;b.TextSize=12;b.TextColor3=Color3.new(1,1,1);b.BackgroundColor3=Color3.fromRGB(75,52,126);b.Position=UDim2.new(x,0,0,5);b.Size=UDim2.new(w,0,0,31);Instance.new('UICorner',b).CornerRadius=UDim.new(0,7);b.MouseButton1Click:Connect(fn);return b
+local screen = Instance.new('ScreenGui')
+screen.Name = 'KIMSReaderV6'; screen.ResetOnSpawn = false
+screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screen.Parent = pg
+local main = Instance.new('Frame')
+main.Size = UDim2.new(0.90,0,0.71,0); main.Position = UDim2.new(.05,0,.13,0)
+main.BackgroundColor3 = Color3.fromRGB(12,17,34); main.BorderSizePixel=0; main.Parent=screen
+Instance.new('UICorner', main).CornerRadius=UDim.new(0,12)
+local stroke=Instance.new('UIStroke',main); stroke.Color=Color3.fromRGB(108,91,225); stroke.Thickness=2
+local title=Instance.new('TextLabel',main)
+title.BackgroundTransparency=1; title.Position=UDim2.new(.025,0,.015,0); title.Size=UDim2.new(.95,0,0,30)
+title.Font=Enum.Font.GothamBold; title.TextSize=16; title.TextColor3=Color3.fromRGB(190,180,255)
+title.TextXAlignment=Enum.TextXAlignment.Left; title.Text='KIMS FISH READER V6 | SCROLL CAPTURE'
+local function button(name,x,w)
+ local b=Instance.new('TextButton',main); b.Size=UDim2.new(w,0,0,32); b.Position=UDim2.new(x,0,0,44)
+ b.Text=name; b.TextScaled=true; b.Font=Enum.Font.GothamBold
+ b.TextColor3=Color3.new(1,1,1); b.BackgroundColor3=Color3.fromRGB(64,57,119)
+ Instance.new('UICorner',b).CornerRadius=UDim.new(0,6); return b
 end
-local scroll=Instance.new('ScrollingFrame',bg);scroll.Position=UDim2.new(0,12,0,46);scroll.Size=UDim2.new(1,-24,1,-58);scroll.ScrollBarThickness=5;scroll.BackgroundColor3=Color3.fromRGB(19,26,43);scroll.BorderSizePixel=0
-local out=Instance.new('TextLabel',scroll);out.Position=UDim2.fromOffset(8,8);out.Size=UDim2.new(1,-18,0,300);out.BackgroundTransparency=1;out.Font=Enum.Font.Code;out.TextSize=12;out.TextXAlignment=Enum.TextXAlignment.Left;out.TextYAlignment=Enum.TextYAlignment.Top;out.TextColor3=Color3.fromRGB(226,237,249);out.TextWrapped=false
-local function refresh()
- run()
- out.Text=table.concat(lines,'\n')
- local rows=#lines
- out.Size=UDim2.new(1,-18,0,math.max(300,rows*17))
- scroll.CanvasSize=UDim2.fromOffset(0,math.max(310,rows*17+15))
- scroll.CanvasPosition=Vector2.zero
+local scanBtn=button('SCAN',.025,.19)
+local copyBtn=button('SALIN',.23,.19)
+local clearBtn=button('RESET',.435,.19)
+local closeBtn=button('TUTUP',.64,.18)
+local counter=Instance.new('TextLabel',main)
+counter.Position=UDim2.new(.025,0,0,83); counter.Size=UDim2.new(.95,0,0,24)
+counter.BackgroundTransparency=1; counter.Font=Enum.Font.Code; counter.TextSize=13
+counter.TextXAlignment=Enum.TextXAlignment.Left; counter.TextColor3=Color3.fromRGB(110,226,165)
+local sc=Instance.new('ScrollingFrame',main)
+sc.Size=UDim2.new(.95,0,1,-119); sc.Position=UDim2.new(.025,0,0,112)
+sc.BackgroundColor3=Color3.fromRGB(20,27,46); sc.BorderSizePixel=0
+sc.ScrollBarThickness=7; sc.AutomaticCanvasSize=Enum.AutomaticSize.Y
+local content=Instance.new('TextLabel',sc)
+content.BackgroundTransparency=1; content.Size=UDim2.new(1,-12,0,0)
+content.AutomaticSize=Enum.AutomaticSize.Y; content.TextWrapped=true
+content.TextXAlignment=Enum.TextXAlignment.Left; content.TextYAlignment=Enum.TextYAlignment.Top
+content.Font=Enum.Font.Code; content.TextSize=12; content.TextColor3=Color3.fromRGB(228,236,255)
+local layout=Instance.new('UIPadding',sc); layout.PaddingTop=UDim.new(0,6); layout.PaddingLeft=UDim.new(0,6)
+local log={}; local signatures={}; local signatureCount=0; local observations=0; local scans=0
+local invScroll
+if gui then
+ local pages=gui:FindFirstChild('Main')
+ pages=pages and pages:FindFirstChild('Content')
+ pages=pages and pages:FindFirstChild('Pages')
+ pages=pages and pages:FindFirstChild('Inventory2')
+ pages=pages and pages:FindFirstChild('Main')
+ invScroll=pages and pages:FindFirstChild('Inventory')
 end
-button('SCAN ULANG',.61,.16,refresh)
-local copyBtn
-copyBtn=button('SALIN',.78,.12,function()
- if type(setclipboard)=='function' then
-    local ok=pcall(setclipboard,table.concat(lines,'\n'))
-    copyBtn.Text=ok and 'TERSALIN!' or 'GAGAL'
- else copyBtn.Text='TAK ADA CLIP' end
-end)
-button('X',.91,.075,function()sg:Destroy()end)
-refresh()
+local function val(label)
+ if not label or not label:IsA('TextLabel') then return '' end
+ return tostring(label.Text or ''):gsub('[\r\n|]',' '):gsub('^%s+',''):gsub('%s+$','')
+end
+local function active(o)
+ local n=o
+ while n and n~=invScroll do
+  if n:IsA('GuiObject') and not n.Visible then return false end
+  n=n.Parent
+ end
+ return true
+end
+local function itemEntry(label)
+ local tile=label.Parent
+ while tile and tile.Parent~=invScroll do tile=tile.Parent end
+ if not tile or not active(tile) then return nil end
+ local name=val(label)
+ if name=='' or name=='ItemName' then return nil end
+ local weight=''; local variant=''; local id=''
+ for _,d in ipairs(tile:GetDescendants()) do
+  if d:IsA('TextLabel') then
+   local t=val(d)
+   if weight=='' and t:find('kg',1,true) then weight=t end
+   if variant=='' and
