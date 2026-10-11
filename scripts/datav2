@@ -1,188 +1,192 @@
--- KIMS TECH | DATA HUNTER V8.1 - CANDIDATE INSPECTOR
--- Read-only diagnostic. No HTTP, no require, no remotes, no inventory changes.
--- Only reports structure/type/limited item-name keys. No arbitrary values or tokens.
+-- KIMS TECH | INVENTORY QUANTITY CHECK V8.2
+-- Read-only diagnostics for the account currently logged into Roblox.
+-- Does not use HTTP, require, remotes, clipboard until user clicks SALIN, or modify inventory.
+-- Only reports category totals, numeric item IDs and numeric values.
 
 local Players = game:GetService('Players')
 local player = Players.LocalPlayer
 if not player then return end
 local pg = player:WaitForChild('PlayerGui')
-local old = pg:FindFirstChild('KIMSInspectorV81')
+local old = pg:FindFirstChild('KIMSQuantityCheckV82')
 if old then old:Destroy() end
 
 local screen = Instance.new('ScreenGui')
-screen.Name='KIMSInspectorV81'
-screen.ResetOnSpawn=false
-screen.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
-screen.Parent=pg
+screen.Name = 'KIMSQuantityCheckV82'
+screen.ResetOnSpawn = false
+screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screen.Parent = pg
+
 local panel = Instance.new('Frame')
-panel.Size=UDim2.new(.94,0,.75,0)
-panel.Position=UDim2.new(.03,0,.11,0)
-panel.BackgroundColor3=Color3.fromRGB(12,17,34)
-panel.BorderSizePixel=0
-panel.Parent=screen
-Instance.new('UICorner',panel).CornerRadius=UDim.new(0,12)
-local border=Instance.new('UIStroke',panel)
-border.Color=Color3.fromRGB(108,91,225)
-border.Thickness=2
-local function label(parent,s,pos,sz,col)
-    local t=Instance.new('TextLabel')
-    t.BackgroundTransparency=1
-    t.Text=tostring(s)
-    t.Position=pos
-    t.Size=sz
-    t.Font=Enum.Font.Code
-    t.TextSize=12
-    t.TextXAlignment=Enum.TextXAlignment.Left
-    t.TextYAlignment=Enum.TextYAlignment.Top
-    t.TextColor3=col or Color3.fromRGB(224,232,250)
-    t.Parent=parent
+panel.Size = UDim2.new(.94,0,.76,0)
+panel.Position = UDim2.new(.03,0,.105,0)
+panel.BackgroundColor3 = Color3.fromRGB(12,17,34)
+panel.BorderSizePixel = 0
+panel.Parent = screen
+Instance.new('UICorner', panel).CornerRadius = UDim.new(0,12)
+local stroke = Instance.new('UIStroke',panel)
+stroke.Color = Color3.fromRGB(108,91,225)
+stroke.Thickness = 2
+
+local function label(parent,txt,pos,size,color)
+    local t = Instance.new('TextLabel')
+    t.BackgroundTransparency = 1
+    t.Position = pos
+    t.Size = size
+    t.Text = txt
+    t.Font = Enum.Font.Code
+    t.TextSize = 12
+    t.TextColor3 = color or Color3.fromRGB(230,235,250)
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.TextYAlignment = Enum.TextYAlignment.Top
+    t.Parent = parent
     return t
 end
-local heading=label(panel,'KIMS V8.1 | CANDIDATE INSPECTOR',UDim2.new(.02,0,.012,0),UDim2.new(.95,0,0,26),Color3.fromRGB(190,180,255))
+local heading = label(panel,'KIMS V8.2 | QUANTITY CHECK',UDim2.new(.02,0,.013,0),UDim2.new(.96,0,0,26),Color3.fromRGB(190,180,255))
 heading.Font=Enum.Font.GothamBold
 heading.TextSize=15
-local function btn(txt,x)
+local function btn(title,x)
     local b=Instance.new('TextButton')
     b.Position=UDim2.new(x,0,0,39)
     b.Size=UDim2.new(.29,0,0,35)
-    b.Text=txt
-    b.Font=Enum.Font.GothamBold
-    b.TextScaled=true
     b.BackgroundColor3=Color3.fromRGB(64,57,119)
     b.TextColor3=Color3.new(1,1,1)
+    b.Font=Enum.Font.GothamBold
+    b.TextScaled=true
+    b.Text=title
     b.Parent=panel
     Instance.new('UICorner',b).CornerRadius=UDim.new(0,6)
     return b
 end
-local inspectBtn=btn('ANALISA',.02)
+local analyzeBtn=btn('HITUNG',.02)
 local copyBtn=btn('SALIN',.35)
 local closeBtn=btn('TUTUP',.68)
-local status=label(panel,'Siap. Klik ANALISA sekali.',UDim2.new(.02,0,0,84),UDim2.new(.96,0,0,21),Color3.fromRGB(110,226,165))
+local status=label(panel,'Siap. Klik HITUNG satu kali.',UDim2.new(.02,0,0,84),UDim2.new(.96,0,0,20),Color3.fromRGB(110,226,165))
 local scroll=Instance.new('ScrollingFrame')
-scroll.Position=UDim2.new(.02,0,0,107)
-scroll.Size=UDim2.new(.96,0,1,-116)
+scroll.Size=UDim2.new(.96,0,1,-118)
+scroll.Position=UDim2.new(.02,0,0,108)
 scroll.BackgroundColor3=Color3.fromRGB(20,27,46)
 scroll.BorderSizePixel=0
 scroll.ScrollBarThickness=6
 scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
 scroll.Parent=panel
-local output=label(scroll,'',UDim2.new(0,6,0,6),UDim2.new(1,-20,0,0))
-output.AutomaticSize=Enum.AutomaticSize.Y
+local output=label(scroll,'',UDim2.new(0,6,0,6),UDim2.new(1,-22,0,0))
 output.TextWrapped=true
+output.AutomaticSize=Enum.AutomaticSize.Y
 local lines={}
 local busy=false
 local closed=false
 local function push(s)
-    if #lines<115 then lines[#lines+1]=tostring(s) end
+    if #lines<125 then lines[#lines+1]=tostring(s) end
 end
 local function render()
     if not closed then output.Text=table.concat(lines,'\n') end
 end
-local function short(s)
-    return tostring(s or ''):gsub('[\r\n|]',' '):sub(1,65)
+local function fmt(n)
+    if n==nil then return '?' end
+    if n==math.floor(n) and math.abs(n)<1000000000000 then return string.format('%.0f',n) end
+    return tostring(n)
 end
-local function boundedKeys(tbl, max)
-    local count=0
-    local samples={}
-    for k,v in pairs(tbl) do
-        count=count+1
-        if #samples<5 then
-            -- Only show key when clearly item-name-like and not long/secret.
-            if type(k)=='string' and #k<=45 and not k:lower():find('key',1,true) and not k:lower():find('token',1,true) then
-                samples[#samples+1]={key=k,typ=type(v),val=v}
-            else
-                samples[#samples+1]={key='('..type(k)..')',typ=type(v),val=v}
-            end
-        end
-        if count>=max then break end
-    end
-    return count,samples
-end
-local function fieldsOnly(t, max)
-    if type(t)~='table' then return '(non-table)' end
-    local out={}
-    local i=0
+local cats={'Fish','Fishing Rods','Baits','Potions','Pets','Pet Eggs','Enchant Stones','Charms','Boats','Gears','Lanterns','Halos','Emotes'}
+local function inspectCategory(root,cat)
+    local t=rawget(root,cat)
+    if type(t)~='table' then return nil end
+    local keys=0
+    local numeric=0
+    local positives=0
+    local zeros=0
+    local neg=0
+    local nonInt=0
+    local nonNumber=0
+    local sum=0
+    local maximum=nil
+    local sample={}
+    local limit=12000
     for k,v in pairs(t) do
-        i=i+1
-        if #out<max then
-            if type(k)=='string' and #k<40 and not k:lower():find('token',1,true) and not k:lower():find('key',1,true) then
-                out[#out+1]=short(k)..':'..type(v)
-            else
-                out[#out+1]='['..type(k)..']:'..type(v)
-            end
+        keys=keys+1
+        if type(k)=='number' and type(v)=='number' and v==v and v~=math.huge and v~=-math.huge then
+            numeric=numeric+1
+            sum=sum+v
+            if v>0 then positives=positives+1 elseif v==0 then zeros=zeros+1 else neg=neg+1 end
+            if v~=math.floor(v) then nonInt=nonInt+1 end
+            if maximum==nil or v>maximum then maximum=v end
+            if #sample<8 then sample[#sample+1]=fmt(k)..'='..fmt(v) end
+        else
+            nonNumber=nonNumber+1
         end
-        if i>=35 then break end
+        if keys>=limit then break end
     end
-    return #out>0 and table.concat(out,', ') or '(empty)'
+    push('  '..cat..': IDs='..keys..' numeric='..numeric..' SUM='..fmt(sum)..' positive='..positives..' zeros='..zeros..' other='..nonNumber)
+    if cat=='Fish' then
+        push('    Fish max value='..fmt(maximum)..' negative='..neg..' fractions='..nonInt)
+        push('    Fish example ID=value: '..(#sample>0 and table.concat(sample,', ') or '(none)'))
+        if keys>=limit then push('    WARNING: category scan truncated at '..limit) end
+    end
+    return {sum=sum,keys=keys,positive=positives,numeric=numeric}
 end
-push('KIMS V8.1 | READ ONLY | NO UPLOAD')
-push('USER @'..player.Name..' | UserId='..tostring(player.UserId))
-push('TARGET: tentukan apakah kandidat Fish/Potions/Baits/Pets = katalog atau inventory')
-push('Hanya bentuk data, tidak mencetak token/API key maupun isi nilai pribadi.')
-render()
-local function inspect()
+local function analyze()
     if type(getgc)~='function' then
-        push('Delta tidak menyediakan getgc.')
-        return
+        push('Tidak tersedia: getgc');return
     end
     push('')
-    push('=== CANDIDATE STRUCTURE ===')
+    push('=== NUMERIC CATEGORY TOTALS ===')
+    push('NOTE: totals are HYPOTHESES, not confirmed owned-item counts.')
     render()
     task.wait()
-    local ok, objects=pcall(getgc,true)
-    if not ok or type(objects)~='table' then
-        push('getgc(true) gagal.');return
-    end
-    push('GC total='..tostring(#objects)..' | range='..tostring(math.min(#objects,16000)))
+    local ok,objects=pcall(getgc,true)
+    if not ok or type(objects)~='table' then push('getgc(true) failed');return end
+    local limit=math.min(#objects,16000)
+    push('GC total='..#objects..' | scan range='..limit)
     local found=0
-    local checked=math.min(#objects,16000)
-    for i=1,checked do
+    local prev=nil
+    for i=1,limit do
         local t=objects[i]
         if type(t)=='table' and type(rawget(t,'Fish'))=='table' and type(rawget(t,'Potions'))=='table' then
             found=found+1
-            if found<=3 then
+            if found<=2 then
                 push('')
-                push('CANDIDATE '..found..' | gc index='..i..' | arrays='..tostring(#t))
-                push('Root fields: '..fieldsOnly(t,12))
-                for _,category in ipairs({'Fish','Rods','Baits','Pets','Potions','Stones'}) do
-                    local child=rawget(t,category)
-                    if type(child)=='table' then
-                        local count,samples=boundedKeys(child,130)
-                        push(category..': #array='..#child..', key sample count='..count..(count==130 and '+' or ''))
-                        for j,item in ipairs(samples) do
-                            local suffix=''
-                            if item.typ=='table' then suffix=' {'..fieldsOnly(item.val,7)..'}' end
-                            push('  '..j..'. '..short(item.key)..' -> '..item.typ..suffix)
-                        end
-                    elseif child~=nil then
-                        push(category..': '..type(child))
-                    end
+                push('CANDIDATE '..found..' | GC index='..i)
+                local fish=rawget(t,'Fish')
+                if prev then
+                    push('  Same Fish table as first? '..tostring(rawequal(fish,prev.fish)))
+                else
+                    prev={fish=fish}
+                end
+                for _,cat in ipairs(cats) do
+                    local tbl=rawget(t,cat)
+                    if type(tbl)=='table' then inspectCategory(t,cat) end
                 end
             end
         end
         if i%350==0 then
-            status.Text='ANALISA '..i..'/'..checked
+            status.Text='Memeriksa '..i..'/'..limit
             task.wait()
             if closed then return end
         end
     end
     push('')
-    push('Candidates found='..found..' (max 3 printed).')
-    push('Interpretasi: Fish keys = nama spesies + value = definisi => kemungkinan katalog.')
-    push('Untuk inventory akun, perlu instance/quantity atau item ID milik pemain.')
+    push('Candidates found='..found..' (2 displayed).')
+    push('CHECK: bandingkan Fish SUM dengan jumlah ikan yang tampil di game (213 sebelumnya).')
+    push('SUM=213 + count data wajar => indikasi quantity map, butuh uji perubahan sah.')
+    push('SUM jauh berbeda => kemungkinan statistik/mapping, BUKAN inventory instance.')
+    push('No network, no inventory modification, no secret fields read.')
     objects=nil
 end
-inspectBtn.MouseButton1Click:Connect(function()
+push('KIMS V8.2 | READ ONLY | NO UPLOAD')
+push('USER @'..player.Name..' | ID='..tostring(player.UserId))
+push('DATA CHECK: numeric ID -> numeric value; no GUI scrolling.')
+push('Click HITUNG once; the program checks up to 16000 GC entries.')
+render()
+analyzeBtn.MouseButton1Click:Connect(function()
     if busy then return end
     busy=true
-    status.Text='ANALISA berjalan...'
+    status.Text='Menghitung...'
     task.spawn(function()
-        local ok,err=pcall(inspect)
-        if not ok then push('ERROR '..short(err)) end
+        local ok,err=pcall(analyze)
+        if not ok then push('ERROR: '..tostring(err):sub(1,180)) end
         if not closed then
-            busy=false
-            status.Text=ok and 'Selesai. Klik SALIN.' or 'Error. Klik SALIN.'
             render()
+            status.Text=ok and 'Selesai. Klik SALIN.' or 'Error. Klik SALIN.'
+            busy=false
         end
     end)
 end)
@@ -190,7 +194,7 @@ copyBtn.MouseButton1Click:Connect(function()
     local fn=(type(setclipboard)=='function' and setclipboard) or (type(toclipboard)=='function' and toclipboard)
     if not fn then status.Text='Clipboard tidak tersedia';return end
     local ok=pcall(fn,table.concat(lines,'\n'))
-    status.Text=ok and 'TERSALIN! Paste ke chat.' or 'Gagal menyalin'
+    status.Text=ok and 'TERSALIN! Paste ke chat.' or 'Salin gagal'
 end)
 closeBtn.MouseButton1Click:Connect(function()
     closed=true
