@@ -1,132 +1,161 @@
--- KIMS INVENTORY PROBE V3.1 — read-only, local-only, no networking.
--- Use only on an account you own or are authorized to inspect.
+-- KIMS FISH READER V4 | local read-only UI inventory diagnostics
+-- Reads text from existing client UI; no network requests or inventory changes.
 local Players = game:GetService('Players')
-local RS = game:GetService('ReplicatedStorage')
-local UIS = game:GetService('UserInputService')
 local player = Players.LocalPlayer
-if not player then return end
-local guiParent = (gethui and gethui()) or game:GetService('CoreGui')
-local old = guiParent:FindFirstChild('KimsInventoryProbeV3')
+local guiRoot = player:WaitForChild('PlayerGui')
+local old = guiRoot:FindFirstChild('KIMS_Fish_Reader_V4')
 if old then old:Destroy() end
-local gui = Instance.new('ScreenGui')
-gui.Name='KimsInventoryProbeV3';gui.ResetOnSpawn=false;gui.IgnoreGuiInset=true
-gui.Parent=guiParent
-local main = Instance.new('Frame')
-main.Size=UDim2.new(0.88,0,0.7,0);main.Position=UDim2.new(.06,0,.14,0)
-main.BackgroundColor3=Color3.fromRGB(16,21,39);main.BorderSizePixel=0;main.Parent=gui
-Instance.new('UICorner',main).CornerRadius=UDim.new(0,12)
-local limit=Instance.new('UISizeConstraint',main);limit.MaxSize=Vector2.new(650,580)
-local header=Instance.new('TextLabel');header.Size=UDim2.new(1,-210,0,44);header.Position=UDim2.new(0,12,0,4)
-header.BackgroundTransparency=1;header.TextColor3=Color3.fromRGB(151,213,255)
-header.Font=Enum.Font.GothamBold;header.TextSize=16;header.TextXAlignment=Enum.TextXAlignment.Left
-header.Text='KIMS READER V3.1 • COPY';header.Parent=main
-local close=Instance.new('TextButton');close.Size=UDim2.fromOffset(80,34);close.Position=UDim2.new(1,-88,0,8)
-close.BackgroundColor3=Color3.fromRGB(82,45,91);close.Text='TUTUP';close.TextColor3=Color3.new(1,1,1);close.Parent=main
-close.MouseButton1Click:Connect(function() gui:Destroy() end)
-local copyBtn=Instance.new('TextButton')
-copyBtn.Size=UDim2.fromOffset(93,34);copyBtn.Position=UDim2.new(1,-190,0,8)
-copyBtn.BackgroundColor3=Color3.fromRGB(38,121,100);copyBtn.Text='SALIN HASIL'
-copyBtn.TextColor3=Color3.new(1,1,1);copyBtn.TextSize=12;copyBtn.Font=Enum.Font.GothamBold
-copyBtn.Parent=main
-Instance.new('UICorner',copyBtn).CornerRadius=UDim.new(0,6)
-local scroll=Instance.new('ScrollingFrame');scroll.Size=UDim2.new(1,-24,1,-70);scroll.Position=UDim2.fromOffset(12,57)
-scroll.BackgroundColor3=Color3.fromRGB(23,30,50);scroll.BorderSizePixel=0;scroll.ScrollBarThickness=5;scroll.Parent=main
-local txt=Instance.new('TextLabel');txt.Size=UDim2.new(1,-14,0,100);txt.Position=UDim2.fromOffset(7,6)
-txt.BackgroundTransparency=1;txt.TextWrapped=true;txt.TextXAlignment=Enum.TextXAlignment.Left;txt.TextYAlignment=Enum.TextYAlignment.Top
-txt.Font=Enum.Font.Code;txt.TextSize=13;txt.TextColor3=Color3.fromRGB(235,242,255);txt.Parent=scroll
-local lines={};local MAXLINES=95
-local function add(s) if #lines<MAXLINES then table.insert(lines,tostring(s)) end end
-add('USER: @'..player.Name..' | DISPLAY: '..player.DisplayName..' | ID: '..player.UserId)
-add('PLACE: '..game.PlaceId..' | No upload. No changes to inventory.')
-add('----- CLIENT VISIBLE CANDIDATES -----')
-local terms={'fish','invent','item','data','catch','caught','journal','rod','backpack','storage'}
-local function relevant(s)
- s=string.lower(s)
- for _,v in ipairs(terms) do if string.find(s,v,1,true) then return true end end
- return false
+
+local sg = Instance.new('ScreenGui')
+sg.Name = 'KIMS_Fish_Reader_V4'
+sg.ResetOnSpawn = false
+sg.IgnoreGuiInset = true
+sg.DisplayOrder = 5000
+sg.Parent = guiRoot
+
+local frame = Instance.new('Frame')
+frame.Size = UDim2.new(.88,0,.68,0)
+frame.Position = UDim2.new(.06,0,.15,0)
+frame.BackgroundColor3 = Color3.fromRGB(12,17,35)
+frame.BorderSizePixel = 0
+frame.Parent = sg
+Instance.new('UICorner', frame).CornerRadius = UDim.new(0,12)
+local edge = Instance.new('UIStroke',frame)
+edge.Color = Color3.fromRGB(99,92,220)
+edge.Thickness = 2
+
+local header = Instance.new('TextLabel')
+header.Size = UDim2.new(1,-180,0,45)
+header.Position = UDim2.new(0,15,0,2)
+header.BackgroundTransparency = 1
+header.Text = 'KIMS FISH READER V4 - ITEM EXTRACTOR'
+header.TextColor3 = Color3.fromRGB(191,200,255)
+header.TextSize = 15
+header.Font = Enum.Font.GothamBold
+header.TextXAlignment = Enum.TextXAlignment.Left
+header.Parent = frame
+
+local function button(text,x,w)
+  local b = Instance.new('TextButton')
+  b.Size = UDim2.new(0,w,0,32)
+  b.Position = UDim2.new(1,x,0,9)
+  b.BackgroundColor3 = Color3.fromRGB(82,49,151)
+  b.TextColor3 = Color3.new(1,1,1)
+  b.TextSize = 12
+  b.Font = Enum.Font.GothamBold
+  b.Text = text
+  b.Parent = frame
+  Instance.new('UICorner',b).CornerRadius=UDim.new(0,6)
+  return b
 end
-local count=0
-local roots={{'Player',player},{'PlayerGui',player:FindFirstChildOfClass('PlayerGui')},{'Backpack',player:FindFirstChildOfClass('Backpack')},{'ReplicatedStorage',RS}}
-for _,entry in ipairs(roots) do
- local label,root=entry[1],entry[2]
- if root then
-  local ok,desc=pcall(function() return root:GetDescendants() end)
-  if ok then
-   add('['..label..'] descendants='..#desc)
-   local per=0
-   for _,obj in ipairs(desc) do
-    if relevant(obj.Name) and per<24 and count<65 then
-     local info=obj.ClassName..' | '..obj:GetFullName()
-     if obj:IsA('ValueBase') and not obj:IsA('ObjectValue') then
-      pcall(function() info=info..' = '..string.sub(tostring(obj.Value),1,90) end)
-     end
-     add(info);per=per+1;count=count+1
+local copy = button('SALIN',-169,76)
+local close = button('TUTUP',-88,76)
+local scroll = Instance.new('ScrollingFrame')
+scroll.Position = UDim2.new(0,12,0,52)
+scroll.Size = UDim2.new(1,-24,1,-63)
+scroll.BackgroundColor3 = Color3.fromRGB(17,23,43)
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 6
+scroll.Parent = frame
+Instance.new('UICorner',scroll).CornerRadius=UDim.new(0,8)
+local output = Instance.new('TextLabel')
+output.Position = UDim2.new(0,8,0,8)
+output.Size = UDim2.new(1,-16,0,100)
+output.BackgroundTransparency = 1
+output.Font = Enum.Font.Code
+output.TextSize = 13
+output.TextColor3 = Color3.fromRGB(204,229,255)
+output.TextWrapped = false
+output.TextXAlignment = Enum.TextXAlignment.Left
+output.TextYAlignment = Enum.TextYAlignment.Top
+output.Parent = scroll
+
+local lines={}
+local function add(s) lines[#lines+1]=tostring(s) end
+local function clean(t)
+  t=tostring(t or '')
+  t=t:gsub('[\r\n]',' ')
+  if #t>130 then t=t:sub(1,127)..'...' end
+  return t
+end
+local function valueOf(obj)
+  if obj:IsA('TextLabel') or obj:IsA('TextButton') or obj:IsA('TextBox') then
+    return clean(obj.Text)
+  elseif obj:IsA('StringValue') or obj:IsA('IntValue') or obj:IsA('NumberValue') then
+    return clean(obj.Value)
+  end
+  return nil
+end
+local function inspect(scope,maxTiles)
+  if not scope then add('NOT FOUND: target GUI');return end
+  add('GUI: '..scope:GetFullName())
+  local tiles={}
+  for _,obj in ipairs(scope:GetDescendants()) do
+    if obj.Name=='Tile' and (obj:IsA('Frame') or obj:IsA('ImageLabel') or obj:IsA('ImageButton')) then
+      tiles[#tiles+1]=obj
     end
-   end
-  else add('['..label..'] not accessible') end
- end
-end
-add('----- EQUIPPED / BACKPACK TOOLS -----')
-for _,root in ipairs({player:FindFirstChildOfClass('Backpack'),player.Character}) do
- if root then
-  for _,obj in ipairs(root:GetChildren()) do
-   if obj:IsA('Tool') then add('TOOL: '..obj.Name) end
   end
- end
-end
-add('DONE. Candidate entries: '..count)
-add('If no inventory data appears, Fish It may store it in private/local tables or server-side data.')
-if #lines>=MAXLINES then add('Output capped for safety.') end
-local report=table.concat(lines,'\n')
-txt.Text=report
-txt.Size=UDim2.new(1,-14,0,math.max(120,#lines*19))
-scroll.CanvasSize=UDim2.new(0,0,0,math.max(130,#lines*19+20))
--- Copy is local-only. No HTTP requests and no uploading any result.
-copyBtn.MouseButton1Click:Connect(function()
- local clipboardFn
- if type(setclipboard)=='function' then clipboardFn=setclipboard
- elseif type(toclipboard)=='function' then clipboardFn=toclipboard end
- if clipboardFn then
-  local ok=pcall(function() clipboardFn(report) end)
-  if ok then
-   copyBtn.Text='TERSALIN!'
-   return
+  add('TILES FOUND: '..#tiles)
+  for i=1,math.min(#tiles,maxTiles) do
+    local tile=tiles[i]
+    add('-- TILE '..i..' | '..tile.ClassName..' | visible='..tostring(tile.Visible))
+    local fields=0
+    for _,sub in ipairs(tile:GetDescendants()) do
+      local val=valueOf(sub)
+      if val and val~='' and fields<14 then
+        add('  '..sub.Name..' = '..val)
+        fields=fields+1
+      end
+    end
+    if fields==0 then add('  (no nonempty text/value fields)') end
+    local attrs=tile:GetAttributes()
+    for k,v in pairs(attrs) do add('  @'..tostring(k)..' = '..clean(v)) end
   end
- end
- -- Some executors have no clipboard API. Show selectable text instead.
- copyBtn.Text='SALIN MANUAL'
- local existing=gui:FindFirstChild('CopyFallback')
- if existing then existing:Destroy() end
- local overlay=Instance.new('Frame');overlay.Name='CopyFallback'
- overlay.Size=UDim2.new(1,-20,1,-68);overlay.Position=UDim2.fromOffset(10,57)
- overlay.BackgroundColor3=Color3.fromRGB(19,24,43);overlay.ZIndex=5;overlay.Parent=main
- local help=Instance.new('TextLabel');help.Size=UDim2.new(1,-12,0,48);help.Position=UDim2.fromOffset(6,3)
- help.TextWrapped=true;help.BackgroundTransparency=1;help.TextColor3=Color3.new(1,1,1)
- help.Font=Enum.Font.Gotham;help.TextSize=12;help.ZIndex=6
- help.Text='Clipboard tidak tersedia. Ketuk teks, pilih semua, lalu salin manual.';help.Parent=overlay
- local field=Instance.new('TextBox');field.Size=UDim2.new(1,-12,1,-93);field.Position=UDim2.fromOffset(6,55)
- field.Text=report;field.MultiLine=true;field.ClearTextOnFocus=false;field.TextEditable=true
- field.TextWrapped=false;field.TextXAlignment=Enum.TextXAlignment.Left;field.TextYAlignment=Enum.TextYAlignment.Top
- field.TextColor3=Color3.fromRGB(236,245,255);field.BackgroundColor3=Color3.fromRGB(32,40,65)
- field.Font=Enum.Font.Code;field.TextSize=12;field.ZIndex=6;field.Parent=overlay
- local back=Instance.new('TextButton');back.Size=UDim2.new(1,-12,0,30);back.Position=UDim2.new(0,6,1,-34)
- back.Text='KEMBALI KE HASIL';back.TextColor3=Color3.new(1,1,1)
- back.BackgroundColor3=Color3.fromRGB(69,56,114);back.ZIndex=6;back.Parent=overlay
- back.MouseButton1Click:Connect(function() overlay:Destroy();copyBtn.Text='SALIN HASIL' end)
+end
+
+add('KIMS V4 | READ ONLY | NO UPLOAD')
+add('USER: @'..player.Name..' | DISPLAY: '..player.DisplayName..' | ID: '..tostring(player.UserId))
+add('PLACE: '..tostring(game.PlaceId))
+local bp=guiRoot:FindFirstChild('Backpack')
+if bp then
+  inspect(bp:FindFirstChild('Display'),50)
+  local n=0
+  for _,obj in ipairs(bp:GetDescendants()) do
+    if obj.Name=='ItemName' and obj:IsA('TextLabel') then
+      n=n+1
+      if n<=45 then add('BACKPACK ITEMNAME '..n..' = '..clean(obj.Text)..' | parent='..obj.Parent.Name) end
+    end
+  end
+  add('BACKPACK ITEMNAME COUNT: '..n)
+else add('Backpack GUI not found') end
+local inv=guiRoot:FindFirstChild('Inventory')
+if inv then
+  add('INVENTORY GUI: '..inv:GetFullName())
+  local n=0
+  for _,obj in ipairs(inv:GetDescendants()) do
+    if obj:IsA('TextLabel') and (obj.Name=='ItemName' or obj.Name=='Name' or obj.Name=='Amount') and obj.Text~='' then
+      n=n+1
+      if n<=35 then add('INVENTORY UI TEXT '..n..' = '..clean(obj.Text)) end
+    end
+  end
+  add('INVENTORY UI TEXT COUNT: '..n)
+end
+add('DONE. These are UI labels, not proof of catch history or complete inventory.')
+local result=table.concat(lines,'\n')
+output.Text=result
+local textService=game:GetService('TextService')
+local viewWidth=math.max(320,math.floor(workspace.CurrentCamera.ViewportSize.X*.75))
+local textBounds=textService:GetTextSize(result,13,Enum.Font.Code,Vector2.new(viewWidth,100000))
+local totalHeight=math.max(200,textBounds.Y+60,#lines*17)
+output.Size=UDim2.new(1,-16,0,totalHeight)
+scroll.CanvasSize=UDim2.new(0,0,0,totalHeight+20)
+copy.MouseButton1Click:Connect(function()
+  if type(setclipboard)=='function' then
+    local ok=pcall(setclipboard,result)
+    copy.Text=ok and 'TERSALIN!' or 'GAGAL'
+  else
+    copy.Text='NO CLIP'
+    -- Executor has no clipboard API; screenshot or use an executor with setclipboard.
+  end
 end)
--- Drag panel by its header, convenient for mobile executor environments.
-local dragging,origin,startPos=false,nil,nil
-header.InputBegan:Connect(function(input)
- if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-  dragging=true;origin=input.Position;startPos=main.Position
- end
-end)
-UIS.InputChanged:Connect(function(input)
- if dragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
-  local d=input.Position-origin
-  main.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y)
- end
-end)
-UIS.InputEnded:Connect(function(input)
- if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=false end
-end)
+close.MouseButton1Click:Connect(function() sg:Destroy() end)
