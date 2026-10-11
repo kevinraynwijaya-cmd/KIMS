@@ -1,314 +1,343 @@
--- KIMS TECH | FISH SOURCE FINDER V19
--- Read-only metadata inspection of cached player Data reached from InventoryController.
--- No getgc, Zetsu hooks, HTTP, remotes, item modifications or raw item values.
-local Players=game:GetService('Players')
-local ReplicatedStorage=game:GetService('ReplicatedStorage')
-local player=Players.LocalPlayer
+-- KIMS TECH | FISH REPLION LOCATOR V20
+-- Read-only structural analysis of already-loaded client modules.
+-- No getgc, remote calls, HTTP, Zetsu, gameplay getters, item actions or uploads.
+-- All item values, IDs, UUIDs, channel contents and secrets are omitted from output.
+local Players = game:GetService('Players')
+local RS = game:GetService('ReplicatedStorage')
+local UIS = game:GetService('UserInputService')
+local player = Players.LocalPlayer
 if not player then return end
-local pg=player:WaitForChild('PlayerGui')
-local old=pg:FindFirstChild('KIMSFishSourceV19')
+local pg = player:WaitForChild('PlayerGui')
+local old = pg:FindFirstChild('KIMSFishReplionV20')
 if old then old:Destroy() end
-local screen=Instance.new('ScreenGui')
-screen.Name='KIMSFishSourceV19'; screen.ResetOnSpawn=false; screen.DisplayOrder=995; screen.Parent=pg
-local panel=Instance.new('Frame',screen)
-panel.Size=UDim2.new(.94,0,.73,0);panel.Position=UDim2.new(.03,0,.12,0)
-panel.BackgroundColor3=Color3.fromRGB(14,20,36);panel.BorderSizePixel=0;panel.Active=true
-Instance.new('UICorner',panel).CornerRadius=UDim.new(0,11)
-local stroke=Instance.new('UIStroke',panel);stroke.Color=Color3.fromRGB(104,90,225);stroke.Thickness=2
-local heading=Instance.new('TextLabel',panel)
-heading.Position=UDim2.new(.025,0,0,4);heading.Size=UDim2.new(.95,0,0,30)
-heading.BackgroundTransparency=1;heading.TextXAlignment=Enum.TextXAlignment.Left
-heading.TextColor3=Color3.fromRGB(211,200,255);heading.Font=Enum.Font.GothamBold
-heading.TextSize=15;heading.Text='KIMS V19 | FISH SOURCE FINDER'
-local function btn(text,x,w)
- local b=Instance.new('TextButton',panel)
- b.Position=UDim2.new(x,0,0,42);b.Size=UDim2.new(w,0,0,32)
- b.BackgroundColor3=Color3.fromRGB(67,60,125);b.TextColor3=Color3.new(1,1,1)
- b.Font=Enum.Font.GothamBold;b.TextScaled=true;b.Text=text
+local screen = Instance.new('ScreenGui')
+screen.Name='KIMSFishReplionV20'; screen.ResetOnSpawn=false; screen.DisplayOrder=998; screen.Parent=pg
+local pane=Instance.new('Frame',screen)
+pane.Size=UDim2.new(.94,0,.69,0);pane.Position=UDim2.new(.03,0,.15,0)
+pane.BackgroundColor3=Color3.fromRGB(13,19,36);pane.BorderSizePixel=0;pane.Active=true
+Instance.new('UICorner',pane).CornerRadius=UDim.new(0,10)
+local border=Instance.new('UIStroke',pane);border.Thickness=2;border.Color=Color3.fromRGB(107,91,224)
+local heading=Instance.new('TextLabel',pane)
+heading.Position=UDim2.new(.025,0,0,5);heading.Size=UDim2.new(.95,0,0,30)
+heading.BackgroundTransparency=1;heading.Font=Enum.Font.GothamBold
+heading.TextSize=15;heading.TextXAlignment=Enum.TextXAlignment.Left
+heading.TextColor3=Color3.fromRGB(205,190,255)
+heading.Text='KIMS V20 | FISH REPLION LOCATOR'
+local function button(label,x,w)
+ local b=Instance.new('TextButton',pane)
+ b.Position=UDim2.new(x,0,0,42);b.Size=UDim2.new(w,0,0,33)
+ b.BackgroundColor3=Color3.fromRGB(64,57,125);b.TextColor3=Color3.new(1,1,1)
+ b.TextScaled=true;b.Font=Enum.Font.GothamBold;b.Text=label
  Instance.new('UICorner',b).CornerRadius=UDim.new(0,6)
  return b
 end
-local again=btn('ULANG',.025,.20)
-local copy=btn('SALIN',.24,.20)
-local mini=btn('MINI',.455,.20)
-local close=btn('TUTUP',.67,.23)
-local status=Instance.new('TextLabel',panel)
-status.Position=UDim2.new(.03,0,0,81);status.Size=UDim2.new(.94,0,0,22)
+local copyBtn=button('SALIN',.025,.27)
+local miniBtn=button('MINI',.36,.27)
+local closeBtn=button('TUTUP',.68,.29)
+local status=Instance.new('TextLabel',pane)
+status.Position=UDim2.new(.025,0,0,81);status.Size=UDim2.new(.95,0,0,23)
 status.BackgroundTransparency=1;status.TextXAlignment=Enum.TextXAlignment.Left
-status.TextColor3=Color3.fromRGB(118,227,172);status.Font=Enum.Font.Code
-status.TextSize=12;status.Text='Menyiapkan pemeriksaan...'
-local scroll=Instance.new('ScrollingFrame',panel)
-scroll.Position=UDim2.new(.025,0,0,108);scroll.Size=UDim2.new(.95,0,1,-120)
-scroll.BackgroundColor3=Color3.fromRGB(22,29,49);scroll.BorderSizePixel=0
-scroll.ScrollBarThickness=6;scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
-local output=Instance.new('TextLabel',scroll)
-output.Position=UDim2.new(0,8,0,6);output.Size=UDim2.new(1,-20,0,0)
-output.BackgroundTransparency=1;output.AutomaticSize=Enum.AutomaticSize.Y
-output.TextWrapped=true;output.TextXAlignment=Enum.TextXAlignment.Left
-output.TextYAlignment=Enum.TextYAlignment.Top;output.Font=Enum.Font.Code
-output.TextSize=12;output.TextColor3=Color3.fromRGB(230,238,255)
-local lines={};local running=false;local finished=false;local closed=false
-local function put(s)
- if #lines<240 then lines[#lines+1]=tostring(s) end
-end
-local function redraw()
- if screen.Parent then output.Text=table.concat(lines,'\n') end
-end
+status.Font=Enum.Font.Code;status.TextSize=12;status.TextColor3=Color3.fromRGB(112,231,168)
+status.Text='Menganalisa struktur Replion...'
+local sc=Instance.new('ScrollingFrame',pane)
+sc.Position=UDim2.new(.025,0,0,109);sc.Size=UDim2.new(.95,0,1,-120)
+sc.BackgroundColor3=Color3.fromRGB(21,27,47);sc.BorderSizePixel=0
+sc.ScrollBarThickness=5;sc.AutomaticCanvasSize=Enum.AutomaticSize.Y
+local content=Instance.new('TextLabel',sc)
+content.Position=UDim2.new(0,7,0,6);content.Size=UDim2.new(1,-20,0,0)
+content.AutomaticSize=Enum.AutomaticSize.Y;content.TextWrapped=true
+content.TextXAlignment=Enum.TextXAlignment.Left;content.TextYAlignment=Enum.TextYAlignment.Top
+content.Font=Enum.Font.Code;content.TextSize=12
+content.TextColor3=Color3.fromRGB(225,234,252);content.BackgroundTransparency=1
+local lines={};local finished=false;local cancel=false
+local function out(s) if #lines<220 then lines[#lines+1]=tostring(s) end end
+local function redraw() if screen.Parent then content.Text=table.concat(lines,'\n') end end
 local function getUps(f)
  if type(getupvalues)=='function' then
-  local ok,t=pcall(getupvalues,f)
-  if ok and type(t)=='table' then return t end
+  local ok,r=pcall(getupvalues,f)
+  if ok and type(r)=='table' then return r end
  end
  if type(debug)=='table' and type(debug.getupvalues)=='function' then
-  local ok,t=pcall(debug.getupvalues,f)
-  if ok and type(t)=='table' then return t end
+  local ok,r=pcall(debug.getupvalues,f)
+  if ok and type(r)=='table' then return r end
  end
  return nil
 end
-local function count(t,limit)
- if type(t)~='table' then return 0 end
- local n=0
- for _ in pairs(t) do n=n+1;if n>=(limit or 10000) then break end end
- return n
-end
-local function isPrivate(s)
- if type(s)~='string' then return false end
- s=s:lower()
- return s:find('token',1,true) or s:find('secret',1,true) or
-  s:find('cookie',1,true) or s:find('password',1,true) or
-  s:find('apikey',1,true) or s:find('webhook',1,true) or
-  s:find('sessionkey',1,true) or s:find('credential',1,true)
-end
-local function isFishKey(s)
- if type(s)~='string' then return false end
- s=s:lower()
- return s:find('fish',1,true) or s:find('caught',1,true) or
-  s:find('journal',1,true) or s:find('bag',1,true) or
-  s:find('storage',1,true) or s:find('inventory',1,true)
-end
-local function compactKeys(t,max)
- local fields={}
- if type(t)~='table' then return '(not a table)' end
- for k,v in pairs(t) do
-  if type(k)=='string' and not isPrivate(k) and isFishKey(k) then
-   fields[#fields+1]=k..':'..type(v)
-  end
- end
- table.sort(fields)
- while #fields>max do table.remove(fields) end
- return #fields>0 and table.concat(fields,', ') or '(no fish/storage-like named fields)'
-end
-local function childSummary(t)
- if type(t)~='table' then return 'type='..type(t) end
- local n,tn,nn,sn,on=0,0,0,0,0
- local uu,ids,quant=0,0,0
- local checked=0
- for _,v in pairs(t) do
-  n=n+1
-  if type(v)=='table' then
-   tn=tn+1
-   if checked<18 then
-    checked=checked+1
-    if rawget(v,'UUID')~=nil then uu=uu+1 end
-    if rawget(v,'Id')~=nil then ids=ids+1 end
-    if rawget(v,'Quantity')~=nil then quant=quant+1 end
-   end
-  elseif type(v)=='number' then nn=nn+1
-  elseif type(v)=='string' then sn=sn+1
-  else on=on+1 end
-  if n>=4500 then break end
- end
- return 'entries='..n..' values[table/number/string/other]='..tn..'/'..nn..'/'..sn..'/'..on..
-  ' sampledRecords='..checked..' withUUID='..uu..' withId='..ids..' withQuantity='..quant
-end
-local function labelValue(category,leaf)
- local root=pg:FindFirstChild('Inventory')
- local o=root
- for _,name in ipairs({'Main','Top','Options',category,'Label',leaf}) do
-  if not o then return 'unavailable' end
-  o=o:FindFirstChild(name)
+local function guiFish()
+ local o=pg:FindFirstChild('Inventory')
+ for _,k in ipairs({'Main','Top','Options','Fish','Label','BagSize'}) do
+  o=o and o:FindFirstChild(k)
  end
  if o and (o:IsA('TextLabel') or o:IsA('TextButton')) then
-  return tostring(o.Text):gsub('[\r\n]',' '):sub(1,50)
+  local s=tostring(o.Text or ''):gsub(',','')
+  local n,cap=s:match('(%d+)%s*/%s*(%d+)')
+  if n then return tonumber(n),tonumber(cap) end
  end
- return 'unavailable'
+ return nil,nil
 end
-local function auditData(data,i)
- put('')
- put('=== PLAYER DATA CANDIDATE '..i..' ===')
- local inv=rawget(data,'Inventory')
- put('Data.Inventory type='..type(inv)..' | sibling field names='..compactKeys(data,35))
- if type(inv)=='table' then
-  for _,name in ipairs({'Fish','Fishing Rods','Items','Pets','Baits','Potions','Charms'}) do
-   local t=rawget(inv,name)
-   if t~=nil then
-    put('  Inventory.'..name..': '..childSummary(t))
-   else
-    put('  Inventory.'..name..': (not found)')
-   end
-  end
-  put('  Inventory fish/storage keys: '..compactKeys(inv,24))
+local function privateKey(s)
+ s=s:lower()
+ for _,word in ipairs({'token','secret','password','cookie','api_key','apikey','webhook','credential','session','auth'}) do
+  if s:find(word,1,true) then return true end
  end
- for _,name in ipairs({'Fish','Fishes','FishInventory','FishStorage','FishingJournal',
-  'CaughtFishMastery','FishBag','FishingData','FishData','Bag','Storage','CaughtFish'}) do
-  local t=rawget(data,name)
-  if t~=nil then
-   put('  Data.'..name..': '..childSummary(t))
-   if type(t)=='table' then
-    put('    nested field names: '..compactKeys(t,16))
-   end
+ return false
+end
+local function fishKey(s)
+ s=s:lower()
+ return s:find('fish',1,true) or s:find('inventory',1,true) or
+  s:find('storage',1,true) or s:find('catch',1,true) or
+  s:find('bag',1,true) or s:find('replion',1,true) or
+  s:find('playerdata',1,true)
+end
+local function historyKey(s)
+ s=s:lower()
+ return s:find('mastery',1,true) or s:find('journal',1,true) or
+        s:find('caught',1,true) or s:find('stat',1,true) or
+        s:find('pity',1,true) or s:find('history',1,true)
+end
+local approvedKeys={
+ Data=true,Inventory=true,Items=true,Fish=true,Fishes=true,
+ FishInventory=true,FishStorage=true,FishBag=true,FishingData=true,
+ Storage=true,Bag=true,Replions=true,Replion=true,Client=true,
+ PlayerData=true,Registry=true,State=true,Channel=true,
+ ['Fishing Rods']=true,Pets=true,Baits=true,InventoryController=true
+}
+local function safeKey(k)
+ if type(k)=='string' and approvedKeys[k] and not privateKey(k) then return k end
+ return '[entry]'
+end
+local function sampleCount(t,cap)
+ local n=0
+ for _ in pairs(t) do n=n+1;if n>=cap then break end end
+ return n
+end
+local recordFields={Id=true,UUID=true,Weight=true,Mutation=true,Variant=true,
+ Rarity=true,Quantity=true,Timestamp=true,Species=true,FishId=true,FishID=true,
+ FishType=true,Size=true,Name=true,ItemId=true,ItemID=true,Type=true}
+local function itemShape(t)
+ local names={}
+ for k,v in pairs(t) do
+  if type(k)=='string' and recordFields[k] then names[#names+1]=k..':'..type(v) end
+ end
+ table.sort(names)
+ return #names>0 and table.concat(names,',') or '(no recognized fields)'
+end
+local function isItemRecord(t)
+ return type(t)=='table' and rawget(t,'UUID')~=nil and rawget(t,'Id')~=nil
+end
+local function categoryOverview(t)
+ local arr={}
+ for _,k in ipairs({'Fish','Fishes','FishInventory','FishStorage','Fishing Rods','Items','Pets','Baits'}) do
+  local v=rawget(t,k)
+  if type(v)=='table' then arr[#arr+1]=k..'='..sampleCount(v,5000) end
+ end
+ return #arr>0 and table.concat(arr,', ') or '(no known categories)'
+end
+local function probeTable(t,path,source,fishCounter,findings,seenCandidates,states)
+ local data=rawget(t,'Data')
+ if type(data)=='table' and (rawget(t,'Channel')~=nil or type(rawget(t,'Get'))=='function') then
+  states.count=states.count+1
+  if states.count<=14 then
+   states.lines[#states.lines+1]='REPLION-LIKE '..source..'/'..path:sub(1,80)..' | Data '..categoryOverview(data)
   end
  end
- -- Inspect only relevant subtrees; no personal values or identifiers are emitted.
- local roots={{t=data,p='Data',d=0}}
- local head=1;local visited=setmetatable({},{__mode='k'})
- local discovered=0;local walked=0;local begin=os.clock()
- while head<=#roots and walked<500 and os.clock()-begin<5 and not closed do
-  local item=roots[head];head=head+1
-  local t=item.t
-  if not visited[t] then
-   visited[t]=true;walked=walked+1
-   if item.d<4 then
-    local processed=0
-    for k,v in pairs(t) do
-     processed=processed+1
-     if type(k)=='string' and not isPrivate(k) and type(v)=='table' then
-      local relevant=isFishKey(k)
-      if relevant then
-       local path=item.p..'/'..k
-       local n=count(v,3000)
-       if item.d>=1 and discovered<16 and (k~='Inventory' or item.d>1) then
-        discovered=discovered+1
-        put('  RELATED '..path:sub(1,96)..' -> '..childSummary(v))
-       end
-       -- Avoid visiting thousands of owned-item records; recurse only into named groups.
-       if (item.d<=1 or n<=120) and #roots<750 then
-        roots[#roots+1]={t=v,p=path,d=item.d+1}
-       end
-      elseif item.d==0 and #roots<750 then
-       -- One level of non-fish naming to find nested named containers.
-       roots[#roots+1]={t=v,p=item.p..'/[group]',d=item.d+1}
-      end
-     end
-     if processed>=110 then break end
+ if seenCandidates[t] then return end
+ local records,weighted,mutated,recordFirst,checked=0,0,0,nil,0
+ local n=0
+ for _,v in pairs(t) do
+  n=n+1
+  if type(v)=='table' and checked<24 then
+   checked=checked+1
+   if isItemRecord(v) then
+    records=records+1
+    if not recordFirst then recordFirst=v end
+    if rawget(v,'Weight')~=nil or rawget(v,'FishWeight')~=nil or rawget(v,'Size')~=nil then
+     weighted=weighted+1
     end
+    if rawget(v,'Mutation')~=nil or rawget(v,'Variant')~=nil then mutated=mutated+1 end
    end
   end
-  if walked%60==0 then task.wait() end
+  if n>=5000 then break end
  end
- put('Related tree groups inspected='..walked..' | matched paths printed='..discovered)
+ local ownerPath=path:lower()
+ local indicatesFish=(ownerPath:find('fish',1,true) or ownerPath:find('catch',1,true)) and
+   not historyKey(ownerPath)
+ local score=records*3+weighted*11+mutated*5
+ if indicatesFish then score=score+20 end
+ if fishCounter and n==fishCounter then score=score+13 end
+ if records>=2 or indicatesFish then
+  seenCandidates[t]=true
+  findings[#findings+1]={score=score,path=path,source=source,n=n,records=records,
+   weighted=weighted,mutated=mutated,shape=recordFirst and itemShape(recordFirst) or '(not an item list)',
+   match=fishCounter and n==fishCounter or false,fish=indicatesFish}
+ end
 end
 local function run()
- lines={}
- put('KIMS V19 | FISH SOURCE FINDER | READ ONLY')
- put('PlaceId='..tostring(game.PlaceId))
- put('Goal: find fish-owned record location adjacent to cached player Data.')
- put('NO getgc, HTTP, Zetsu, remotes, game getters, item actions or raw IDs.')
- put('GUI counters may be stale; items can change during fishing.')
- put('=== GUI COUNTERS (not record-list evidence) ===')
- put('Fish='..labelValue('Fish','BagSize'))
- put('Rods='..labelValue('Rods','ItemSize'))
- put('Items='..labelValue('Inventory','ItemSize'))
- if type(getloadedmodules)~='function' then put('No getloadedmodules');return end
+ out('KIMS V20 | FISH REPLION LOCATOR | READ ONLY')
+ out('PlaceId='..tostring(game.PlaceId))
+ out('NO getgc, HTTP, remotes, Zetsu, game getters, raw item IDs or uploads.')
+ local fishCounter,capacity=guiFish()
+ out('Fish GUI count='..tostring(fishCounter or 'unavailable')..'/'..tostring(capacity or '?')..' (may be cached)')
+ if type(getloadedmodules)~='function' then out('getloadedmodules unavailable.');return end
  local ok,loaded=pcall(getloadedmodules)
- if not ok or type(loaded)~='table' then put('Loaded modules unavailable');return end
- local target
- for i,m in ipairs(loaded) do
+ if not ok or type(loaded)~='table' then out('Loaded modules unavailable.');return end
+ local wanted={
+  ['ReplicatedStorage.Packages.Replion']=true,
+  ['ReplicatedStorage.Packages._Index.ytrev_replion@2.0.0-rc.3.replion.Client']=true,
+  ['ReplicatedStorage.Controllers.InventoryController']=true,
+  ['ReplicatedFirst.GAME.Runner.WaitForPlayerData']=true
+ }
+ local modules={};local matches={};local count=0
+ for _,m in ipairs(loaded) do
+  count=count+1
   if typeof(m)=='Instance' and m:IsA('ModuleScript') then
-   local got,path=pcall(function()return m:GetFullName()end)
-   if got and path=='ReplicatedStorage.Controllers.InventoryController' then
-    target=m;break
+   local good,name=pcall(function()return m:GetFullName()end)
+   if good then
+    if wanted[name] then modules[#modules+1]={m=m,name=name} end
+    if name:find('Controller',1,true) and (name:find('Fish',1,true) or name:find('Catch',1,true) or name:find('Storage',1,true)) then
+     matches[#matches+1]=name
+    end
    end
   end
-  if i%650==0 then task.wait() end
+  if count%500==0 then task.wait() end
  end
- if not target then put('InventoryController not loaded');return end
- local good,mod=pcall(require,target)
- if not good then put('Cached module export unavailable');return end
- put('InventoryController cached export='..type(mod))
- local queue={{v=mod,d=0}};local head=1
- local seen=setmetatable({},{__mode='k'});local seenData=setmetatable({},{__mode='k'})
- local found=0;local nodes=0;local functions=0;local start=os.clock()
- while head<=#queue and nodes<1550 and os.clock()-start<12 and not closed do
-  local node=queue[head];head=head+1
-  local obj=node.v
-  if not seen[obj] then
-   seen[obj]=true;nodes=nodes+1
+ out('Loaded modules='..count..' | exact targets='..#modules)
+ table.sort(matches)
+ out('=== FISH/CATCH CONTROLLER NAME CLUES ===')
+ for i=1,math.min(#matches,12) do out('  '..matches[i]) end
+ if #matches==0 then out('  No fish-named controllers in loaded modules') end
+ local queue={};local head=1
+ local function push(v,p,d,s)
+  if (type(v)=='table' or type(v)=='function') and #queue<5500 then
+   queue[#queue+1]={v=v,path=p,depth=d,source=s}
+  end
+ end
+ for _,m in ipairs(modules) do
+  local good,res=pcall(require,m.m)
+  local short=m.name:match('([^%.]+)$') or m.name
+  out('MODULE '..short..' export='..(good and type(res) or 'unavailable'))
+  if good then push(res,'[export]',0,short) end
+ end
+ local visited=setmetatable({},{__mode='k'})
+ local seenCandidates=setmetatable({},{__mode='k'})
+ local findings={};local states={count=0,lines={}}
+ local nodes,functions,fields=0,0,0
+ local start=os.clock()
+ while head<=#queue and nodes<2400 and fields<18000 and os.clock()-start<15 and not cancel do
+  local entry=queue[head];head=head+1
+  local obj=entry.v
+  if not visited[obj] then
+   visited[obj]=true;nodes=nodes+1
    if type(obj)=='function' then
     functions=functions+1
-    if functions<=225 then
-     local up=getUps(obj)
-     if type(up)=='table' then
-      local c=0
-      for _,v in pairs(up) do
-       c=c+1;if c>16 then break end
-       if (type(v)=='table' or type(v)=='function') and node.d<7 then
-        queue[#queue+1]={v=v,d=node.d+1}
+    if functions<=330 and entry.depth<8 then
+     local ups=getUps(obj)
+     if ups then
+      local i=0
+      for _,v in pairs(ups) do
+       i=i+1
+       if i<=15 then push(v,entry.path..'/[upvalue]',entry.depth+1,entry.source) end
+       if i>=20 then break end
+      end
+     end
+    end
+   else
+    probeTable(obj,entry.path,entry.source,fishCounter,findings,seenCandidates,states)
+    if entry.depth<9 then
+     local i=0
+     local picked={}
+     -- Named source containers come first even when large tables have unordered keys.
+     for _,k in ipairs({'Data','Inventory','Fish','Fishes','FishInventory','FishStorage',
+        'FishingData','PlayerData','Replions','Replion','Client','Registry','State','Items'}) do
+      local v=rawget(obj,k)
+      if type(v)=='table' or type(v)=='function' then
+       picked[k]=true
+       push(v,entry.path..'/'..k,entry.depth+1,entry.source)
+      end
+     end
+     for k,v in pairs(obj) do
+      i=i+1;fields=fields+1
+      if (type(v)=='table' or type(v)=='function') and not picked[k] then
+       local isRecord=type(v)=='table' and isItemRecord(v)
+       -- Fish named branches prioritized, non-record branches sampled to avoid large inventories.
+       local relevant=type(k)=='string' and fishKey(k) and not privateKey(k)
+       if not isRecord and (relevant or i<=45) then
+        local part=safeKey(k)
+        -- Skip deeply nested history/mastery species tables; they are not owned fish.
+        if not (type(k)=='string' and historyKey(k) and entry.depth>2) then
+         push(v,entry.path..'/'..part,entry.depth+1,entry.source)
+        end
        end
       end
+      if i>=170 or fields>=18000 then break end
      end
-    end
-   elseif type(obj)=='table' then
-    local data=rawget(obj,'Data')
-    local potential={data,obj}
-    for _,d in ipairs(potential) do
-     if type(d)=='table' and not seenData[d] then
-      local inv=rawget(d,'Inventory')
-      if type(inv)=='table' and (type(rawget(inv,'Fishing Rods'))=='table' or
-          type(rawget(inv,'Pets'))=='table') then
-       seenData[d]=true;found=found+1
-       if found<=3 then auditData(d,found) end
-      end
-     end
-    end
-    if type(data)=='table' and node.d<7 then queue[#queue+1]={v=data,d=node.d+1} end
-    local c=0
-    for k,v in pairs(obj) do
-     c=c+1
-     if c<=65 and node.d<7 and (type(v)=='table' or type(v)=='function') then
-      -- Individual item records are leaves, not sources; skip them in graph traversal.
-      local isRecord=type(v)=='table' and rawget(v,'UUID')~=nil and rawget(v,'Id')~=nil
-      if not isRecord and #queue<6500 then
-       queue[#queue+1]={v=v,d=node.d+1}
-      end
-     end
-     if c>=90 then break end
     end
    end
-   if nodes%70==0 then status.Text='Memeriksa '..nodes..' objek...';task.wait() end
+   if nodes%65==0 then status.Text='Memeriksa '..nodes..' objek...';task.wait() end
   end
  end
- put('')
- put('=== FINISH ===')
- put('Data candidates='..found..' | controller graph nodes='..nodes..' | funcs='..functions)
- put('Fish record source not proven unless an actual owned-record structure is found.')
- put('FishingJournal/CaughtFishMastery may be history or statistics, NOT unsold fish.')
- put('Do not upload candidate lists to KIMS website without further validation.')
+ out('')
+ out('=== REPLION DATA OBJECTS (STRUCTURE) ===')
+ out('Replion-like objects='..states.count)
+ for _,s in ipairs(states.lines) do out(s) end
+ out('')
+ out('=== ITEM RECORD LIST CANDIDATES ===')
+ table.sort(findings,function(a,b) return a.score>b.score end)
+ out('Candidates='..#findings..' | showing='..math.min(#findings,18))
+ for i=1,math.min(#findings,18) do
+  local r=findings[i]
+  out('C'..i..' score='..r.score..' source='..r.source..' path='..r.path:sub(1,125))
+  out('  entries='..r.n..' sampledUUID+Id='..r.records..' weightField='..r.weighted..
+    ' mutationField='..r.mutated..' fishPath='..tostring(r.fish)..' matchGUI='..tostring(r.match))
+  out('  record fields: '..r.shape)
+ end
+ if #findings==0 then out('No record-list candidates found within bounded graph.') end
+ out('')
+ out('=== AUDIT ===')
+ out('graph nodes='..nodes..' functions='..functions..' fields='..fields..' timeLimit='..tostring(os.clock()-start>=15))
+ out('Matching record count alone does not establish owned-fish inventory.')
+ out('CaughtFishMastery and FishingJournal are NOT unsold fish lists.')
+ out('No UUID values, item values, credentials, remote calls or uploads collected.')
 end
-local function start()
- if running or closed then return end
- running=true;finished=false;status.Text='Memeriksa PlayerData...'
- task.spawn(function()
-  local ok,err=pcall(run)
-  if not ok then put('ERROR: '..tostring(err):sub(1,130)) end
-  finished=true;running=false;redraw()
-  if not closed then status.Text=ok and 'SELESAI | SALIN laporan' or 'ERROR | SALIN laporan' end
- end)
-end
-again.MouseButton1Click:Connect(start)
-copy.MouseButton1Click:Connect(function()
- if not finished then status.Text='Tunggu SELESAI dulu';return end
- local clip=type(setclipboard)=='function' and setclipboard or
-  (type(toclipboard)=='function' and toclipboard)
- if not clip then status.Text='Clipboard tidak tersedia';return end
- local ok=pcall(clip,table.concat(lines,'\n'))
+copyBtn.MouseButton1Click:Connect(function()
+ if not finished then status.Text='Tunggu SELESAI';return end
+ local cb=type(setclipboard)=='function' and setclipboard or
+    (type(toclipboard)=='function' and toclipboard)
+ if not cb then status.Text='Clipboard unsupported';return end
+ local ok=pcall(cb,table.concat(lines,'\n'))
  status.Text=ok and 'Laporan tersalin' or 'SALIN gagal'
 end)
-local small=false
-mini.MouseButton1Click:Connect(function()
- small=not small;scroll.Visible=not small
- panel.Size=small and UDim2.new(.94,0,0,111) or UDim2.new(.94,0,.73,0)
- mini.Text=small and 'BUKA' or 'MINI'
+local mini=false
+miniBtn.MouseButton1Click:Connect(function()
+ mini=not mini;sc.Visible=not mini
+ pane.Size=mini and UDim2.new(.94,0,0,114) or UDim2.new(.94,0,.69,0)
+ miniBtn.Text=mini and 'BUKA' or 'MINI'
 end)
-close.MouseButton1Click:Connect(function() closed=true;screen:Destroy() end)
-start()
+closeBtn.MouseButton1Click:Connect(function()cancel=true;screen:Destroy()end)
+do
+ local dragging=false;local dragStart;local posStart
+ heading.InputBegan:Connect(function(input)
+  if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseButton1 then
+   dragging=true;dragStart=input.Position;posStart=pane.Position
+  end
+ end)
+ heading.InputEnded:Connect(function(input)
+  if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end
+ end)
+ UIS.InputChanged:Connect(function(input)
+  if not dragging or not dragStart or cancel then return end
+  if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseMovement then
+   local delta=input.Position-dragStart
+   pane.Position=UDim2.new(posStart.X.Scale,posStart.X.Offset+delta.X,posStart.Y.Scale,posStart.Y.Offset+delta.Y)
+  end
+ end)
+end
+task.spawn(function()
+ local ok,err=pcall(run)
+ finished=true
+ if not cancel then
+  if not ok then out('ERROR: '..tostring(err):sub(1,120)) end
+  redraw()
+  status.Text=ok and 'SELESAI - tekan SALIN' or 'ERROR - tekan SALIN'
+ end
+end)
