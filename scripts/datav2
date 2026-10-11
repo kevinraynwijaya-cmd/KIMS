@@ -1,13 +1,13 @@
--- KIMS FISH READER V6 — INVENTORY SCROLL CAPTURE
+-- KIMS FISH READER V6.1 — LIGHT MANUAL SCAN
 -- Read-only. Does not upload, alter inventory, fire remotes, or scroll automatically.
 local Players = game:GetService('Players')
 local player = Players.LocalPlayer
 local pg = player:WaitForChild('PlayerGui')
 local gui = pg:FindFirstChild('Inventory')
-local old = pg:FindFirstChild('KIMSReaderV6')
+local old = pg:FindFirstChild('KIMSReaderV61')
 if old then old:Destroy() end
 local screen = Instance.new('ScreenGui')
-screen.Name = 'KIMSReaderV6'; screen.ResetOnSpawn = false
+screen.Name = 'KIMSReaderV61'; screen.ResetOnSpawn = false
 screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screen.Parent = pg
 local main = Instance.new('Frame')
@@ -18,7 +18,7 @@ local stroke=Instance.new('UIStroke',main); stroke.Color=Color3.fromRGB(108,91,2
 local title=Instance.new('TextLabel',main)
 title.BackgroundTransparency=1; title.Position=UDim2.new(.025,0,.015,0); title.Size=UDim2.new(.95,0,0,30)
 title.Font=Enum.Font.GothamBold; title.TextSize=16; title.TextColor3=Color3.fromRGB(190,180,255)
-title.TextXAlignment=Enum.TextXAlignment.Left; title.Text='KIMS FISH READER V6 | SCROLL CAPTURE'
+title.TextXAlignment=Enum.TextXAlignment.Left; title.Text='KIMS READER V6.1 | MANUAL SCAN'
 local function button(name,x,w)
  local b=Instance.new('TextButton',main); b.Size=UDim2.new(w,0,0,32); b.Position=UDim2.new(x,0,0,44)
  b.Text=name; b.TextScaled=true; b.Font=Enum.Font.GothamBold
@@ -76,4 +76,4 @@ local function itemEntry(label)
   if d:IsA('TextLabel') then
    local t=val(d)
    if weight=='' and t:find('kg',1,true) then weight=t end
-   if variant=='' and
+   if variant=='' and d~=label
