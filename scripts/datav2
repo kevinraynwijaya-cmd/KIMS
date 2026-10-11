@@ -1,4 +1,4 @@
--- KIMS FISH READER V6.1 — LIGHT MANUAL SCAN
+-- KIMS FISH READER V6.1 FIX — LIGHT MANUAL SCAN
 -- Read-only. Does not upload, alter inventory, fire remotes, or scroll automatically.
 local Players = game:GetService('Players')
 local player = Players.LocalPlayer
@@ -18,7 +18,7 @@ local stroke=Instance.new('UIStroke',main); stroke.Color=Color3.fromRGB(108,91,2
 local title=Instance.new('TextLabel',main)
 title.BackgroundTransparency=1; title.Position=UDim2.new(.025,0,.015,0); title.Size=UDim2.new(.95,0,0,30)
 title.Font=Enum.Font.GothamBold; title.TextSize=16; title.TextColor3=Color3.fromRGB(190,180,255)
-title.TextXAlignment=Enum.TextXAlignment.Left; title.Text='KIMS READER V6.1 | MANUAL SCAN'
+title.TextXAlignment=Enum.TextXAlignment.Left; title.Text='KIMS READER V6.1 FIX | MANUAL SCAN'
 local function button(name,x,w)
  local b=Instance.new('TextButton',main); b.Size=UDim2.new(w,0,0,32); b.Position=UDim2.new(x,0,0,44)
  b.Text=name; b.TextScaled=true; b.Font=Enum.Font.GothamBold
@@ -76,4 +76,69 @@ local function itemEntry(label)
   if d:IsA('TextLabel') then
    local t=val(d)
    if weight=='' and t:find('kg',1,true) then weight=t end
-   if variant=='' and d~=label
+   if variant=='' and d~=label and d.Name=='ItemName' and d.Parent and d.Parent.Name=='Variant' then variant=t end
+  end
+ end
+ for _,a in ipairs({'UUID','UID','Id','ItemId','Guid'}) do
+  local v=tile:GetAttribute(a)
+  if v~=nil then id=tostring(v); break end
+ end
+ return name,weight,variant,id
+end
+local function render()
+ counter.Text='SCAN '..scans..'  |  TERAMATI '..observations..'  |  SIGNATURE UNIK '..signatureCount
+ local header='KIMS V6.1 | READ ONLY | NO UPLOAD\nUSER: @'..player.Name..' | Display: '..player.DisplayName..' | UserId: '..player.UserId..'\n'
+ local ls=player:FindFirstChild('leaderstats')
+ if ls then
+  for _,name in ipairs({'Caught','Rarest Fish'}) do
+   local v=ls:FindFirstChild(name)
+   if v and v:IsA('ValueBase') then header=header..name..': '..tostring(v.Value)..'\n' end
+  end
+ end
+ header=header..'INV SCROLL: '..(invScroll and invScroll:GetFullName() or 'NOT FOUND')..'\n'
+ header=header..'INFO: Scan MANUAL setelah scroll, signature unik bukan total ikan.\n'
+ local from=math.max(1,#log-185)
+ content.Text=header..'--- ITEM TERAMATI ---\n'..table.concat(log,'\n',from)
+end
+local function scan()
+ scans=scans+1
+ if not invScroll then table.insert(log,'[ERROR] Inventory2.Main.Inventory tidak ditemukan. Buka inventory game.');render();return end
+ local current=0; local new=0
+ local processed=0
+ for _,d in ipairs(invScroll:GetDescendants()) do
+  processed=processed+1
+  if processed>4500 then break end
+  if d:IsA('TextLabel') and d.Name=='ItemName' and (not d.Parent or d.Parent.Name~='Variant') then
+   local name,weight,variant,id=itemEntry(d)
+   if name then
+    current=current+1
+    local sig=table.concat({name,weight,variant,id},'|')
+    if not signatures[sig] then
+     signatures[sig]=true; signatureCount=signatureCount+1; new=new+1
+     observations=observations+1
+     table.insert(log,string.format('%03d | %s | weight=%s | variant=%s | id=%s',signatureCount,name,weight~='' and weight or '?',variant~='' and variant or '?',id~='' and id or '?'))
+    end
+   end
+  end
+ end
+ if new>0 or scans==1 then table.insert(log,'[SCAN '..scans..'] tiles aktif='..current..' | signature baru='..new) end
+ render()
+end
+scanBtn.MouseButton1Click:Connect(scan)
+copyBtn.MouseButton1Click:Connect(function()
+ local data='KIMS V6.1 | READ ONLY\nUSER: @'..player.Name..' | UserId: '..player.UserId..'\n'
+ local ls=player:FindFirstChild('leaderstats')
+ if ls then for _,k in ipairs({'Caught','Rarest Fish'}) do local o=ls:FindFirstChild(k);if o and o:IsA('ValueBase') then data=data..k..'='..tostring(o.Value)..'\n' end end end
+ data=data..'Scans='..scans..' | unique signatures='..signatureCount..' (NOT total items)\n'..table.concat(log,'\n')
+ if type(setclipboard)=='function' then
+  local ok=pcall(setclipboard,data)
+  copyBtn.Text=ok and 'TERSALIN!' or 'GAGAL COPY'
+ elseif type(toclipboard)=='function' then
+  local ok=pcall(toclipboard,data)
+  copyBtn.Text=ok and 'TERSALIN!' or 'GAGAL COPY'
+ else copyBtn.Text='NO CLIPBOARD' end
+end)
+clearBtn.MouseButton1Click:Connect(function() signatures={};signatureCount=0;observations=0;scans=0;log={};scan() end)
+closeBtn.MouseButton1Click:Connect(function() screen:Destroy() end)
+table.insert(log, '[SIAP] Buka inventory, scroll, tekan SCAN. Tidak ada scan otomatis.')
+render()
