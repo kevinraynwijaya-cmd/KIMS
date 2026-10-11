@@ -1,96 +1,93 @@
-local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
-
-local p = Players.LocalPlayer
-local pg = p:WaitForChild("PlayerGui")
-
--- =========================================================
--- CONFIG
--- =========================================================
-
-local API_URL = "https://kims.asia/statakun/api/debug.php"
-local API_KEY = "stat-kims2026"
-local INTERVAL = 1
-
--- =========================================================
--- HELPERS
--- =========================================================
-
-local function textOf(obj)
-    if not obj then
-        return ""
-    end
-
-    local ok, value = pcall(function()
-        return obj.Text
-    end)
-
-    if ok and value ~= nil then
-        return tostring(value)
-    end
-
-    return ""
+-- KIMS INVENTORY PROBE V3 — read-only, local-only, no networking.
+-- Use only on an account you own or are authorized to inspect.
+local Players = game:GetService('Players')
+local RS = game:GetService('ReplicatedStorage')
+local UIS = game:GetService('UserInputService')
+local player = Players.LocalPlayer
+if not player then return end
+local guiParent = (gethui and gethui()) or game:GetService('CoreGui')
+local old = guiParent:FindFirstChild('KimsInventoryProbeV3')
+if old then old:Destroy() end
+local gui = Instance.new('ScreenGui')
+gui.Name='KimsInventoryProbeV3';gui.ResetOnSpawn=false;gui.IgnoreGuiInset=true
+gui.Parent=guiParent
+local main = Instance.new('Frame')
+main.Size=UDim2.new(0.88,0,0.7,0);main.Position=UDim2.new(.06,0,.14,0)
+main.BackgroundColor3=Color3.fromRGB(16,21,39);main.BorderSizePixel=0;main.Parent=gui
+Instance.new('UICorner',main).CornerRadius=UDim.new(0,12)
+local limit=Instance.new('UISizeConstraint',main);limit.MaxSize=Vector2.new(650,580)
+local header=Instance.new('TextLabel');header.Size=UDim2.new(1,-110,0,44);header.Position=UDim2.new(0,12,0,4)
+header.BackgroundTransparency=1;header.TextColor3=Color3.fromRGB(151,213,255)
+header.Font=Enum.Font.GothamBold;header.TextSize=16;header.TextXAlignment=Enum.TextXAlignment.Left
+header.Text='KIMS FISH READER V3 • LOCAL TEST';header.Parent=main
+local close=Instance.new('TextButton');close.Size=UDim2.fromOffset(80,34);close.Position=UDim2.new(1,-88,0,8)
+close.BackgroundColor3=Color3.fromRGB(82,45,91);close.Text='TUTUP';close.TextColor3=Color3.new(1,1,1);close.Parent=main
+close.MouseButton1Click:Connect(function() gui:Destroy() end)
+local scroll=Instance.new('ScrollingFrame');scroll.Size=UDim2.new(1,-24,1,-70);scroll.Position=UDim2.fromOffset(12,57)
+scroll.BackgroundColor3=Color3.fromRGB(23,30,50);scroll.BorderSizePixel=0;scroll.ScrollBarThickness=5;scroll.Parent=main
+local txt=Instance.new('TextLabel');txt.Size=UDim2.new(1,-14,0,100);txt.Position=UDim2.fromOffset(7,6)
+txt.BackgroundTransparency=1;txt.TextWrapped=true;txt.TextXAlignment=Enum.TextXAlignment.Left;txt.TextYAlignment=Enum.TextYAlignment.Top
+txt.Font=Enum.Font.Code;txt.TextSize=13;txt.TextColor3=Color3.fromRGB(235,242,255);txt.Parent=scroll
+local lines={};local MAXLINES=95
+local function add(s) if #lines<MAXLINES then table.insert(lines,tostring(s)) end end
+add('USER: @'..player.Name..' | DISPLAY: '..player.DisplayName..' | ID: '..player.UserId)
+add('PLACE: '..game.PlaceId..' | No upload. No changes to inventory.')
+add('----- CLIENT VISIBLE CANDIDATES -----')
+local terms={'fish','invent','item','data','catch','caught','journal','rod','backpack','storage'}
+local function relevant(s)
+ s=string.lower(s)
+ for _,v in ipairs(terms) do if string.find(s,v,1,true) then return true end end
+ return false
 end
-
-local function fullNameOf(obj)
-    if not obj then
-        return ""
+local count=0
+local roots={{'Player',player},{'PlayerGui',player:FindFirstChildOfClass('PlayerGui')},{'Backpack',player:FindFirstChildOfClass('Backpack')},{'ReplicatedStorage',RS}}
+for _,entry in ipairs(roots) do
+ local label,root=entry[1],entry[2]
+ if root then
+  local ok,desc=pcall(function() return root:GetDescendants() end)
+  if ok then
+   add('['..label..'] descendants='..#desc)
+   local per=0
+   for _,obj in ipairs(desc) do
+    if relevant(obj.Name) and per<24 and count<65 then
+     local info=obj.ClassName..' | '..obj:GetFullName()
+     if obj:IsA('ValueBase') and not obj:IsA('ObjectValue') then
+      pcall(function() info=info..' = '..string.sub(tostring(obj.Value),1,90) end)
+     end
+     add(info);per=per+1;count=count+1
     end
-
-    local ok, value = pcall(function()
-        return obj:GetFullName()
-    end)
-
-    if ok and value then
-        return tostring(value)
-    end
-
-    return ""
+   end
+  else add('['..label..'] not accessible') end
+ end
 end
-
-local function parseMultiplier(text)
-    text = tostring(text or "")
-
-    local n =
-        text:match("[xX×]%s*(%d+)")
-        or text:match("(%d+)%s*[xX×]")
-
-    return tonumber(n)
+add('----- EQUIPPED / BACKPACK TOOLS -----')
+for _,root in ipairs({player:FindFirstChildOfClass('Backpack'),player.Character}) do
+ if root then
+  for _,obj in ipairs(root:GetChildren()) do
+   if obj:IsA('Tool') then add('TOOL: '..obj.Name) end
+  end
+ end
 end
-
-local function parseTimer(text)
-    text = tostring(text or "")
-
-    local h, m, s =
-        text:match("(%d+)%s*[hH]%s*(%d+)%s*[mM]%s*(%d+)%s*[sS]")
-
-    if h then
-        return tonumber(h) * 3600
-            + tonumber(m) * 60
-            + tonumber(s)
-    end
-
-    local m2, s2 =
-        text:match("(%d+)%s*[mM]%s*(%d+)%s*[sS]")
-
-    if m2 then
-        return tonumber(m2) * 60 + tonumber(s2)
-    end
-
-    local onlySeconds =
-        text:match("(%d+)%s*[sS]")
-
-    if onlySeconds then
-        return tonumber(onlySeconds)
-    end
-
-    local hh, mm, ss =
-        text:match("(%d+):(%d+):(%d+)")
-
-    if hh then
-        return tonumber(hh) * 3600
-            + tonumber(mm) * 60
-            + tonumber(ss)
-    end
-
-    return nil
+add('DONE. Candidate entries: '..count)
+add('If no inventory data appears, Fish It may store it in private/local tables or server-side data.')
+if #lines>=MAXLINES then add('Output capped for safety.') end
+local report=table.concat(lines,'\n')
+txt.Text=report
+txt.Size=UDim2.new(1,-14,0,math.max(120,#lines*19))
+scroll.CanvasSize=UDim2.new(0,0,0,math.max(130,#lines*19+20))
+-- Drag panel by its header, convenient for mobile executor environments.
+local dragging,origin,startPos=false,nil,nil
+header.InputBegan:Connect(function(input)
+ if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+  dragging=true;origin=input.Position;startPos=main.Position
+ end
+end)
+UIS.InputChanged:Connect(function(input)
+ if dragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
+  local d=input.Position-origin
+  main.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y)
+ end
+end)
+UIS.InputEnded:Connect(function(input)
+ if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=false end
+end)
