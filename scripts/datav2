@@ -1,224 +1,597 @@
--- KIMS TECH | INVENTORY SUMMARY V14
--- Purpose: read VERIFIED GUI counter paths found by V13. NOT a full inventory export.
--- Delta Android / Fish It. Read-only: no remote, no require, no getgc, no uploads.
--- Values come from current client UI; missing is never treated as zero.
+-- KIMS TECH | DIRECT CLIENT INVENTORY READER V15
+-- For the user's own Fish It client in Roblox / Delta Android.
+-- Goal: locate possible owned-item collections without opening/scanning inventory GUI.
+-- Reads already-loaded ModuleScript exports and function upvalues, never calls exported functions.
+-- No getgc, no remotes, no external HTTP, no inventory modification, no automatic upload.
+-- NOTE: require() is used ONLY for ModuleScripts confirmed by getloadedmodules().
+-- A module cache normally makes this read-only, but executor/game behavior may vary.
+-- This script never claims a table is an owned inventory without validation.
 
 local Players = game:GetService('Players')
 local HttpService = game:GetService('HttpService')
+local UserInputService = game:GetService('UserInputService')
 local player = Players.LocalPlayer
 if not player then return end
 local pg = player:WaitForChild('PlayerGui')
-local old = pg:FindFirstChild('KIMSInventorySummaryV14')
-if old then old:Destroy() end
 
+local old = pg:FindFirstChild('KIMSDirectV15')
+if old then old:Destroy() end
 local screen = Instance.new('ScreenGui')
-screen.Name='KIMSInventorySummaryV14'
+screen.Name='KIMSDirectV15'
 screen.ResetOnSpawn=false
 screen.DisplayOrder=999
 screen.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 screen.Parent=pg
-local panel=Instance.new('Frame',screen)
-panel.Size=UDim2.new(.90,0,0,315)
-panel.Position=UDim2.new(.05,0,.11,0)
-panel.BackgroundColor3=Color3.fromRGB(14,20,38)
+
+local panel = Instance.new('Frame')
+panel.Size=UDim2.new(.93,0,.73,0)
+panel.Position=UDim2.new(.035,0,.13,0)
+panel.BackgroundColor3=Color3.fromRGB(13,19,36)
 panel.BorderSizePixel=0
+panel.Active=true
+panel.Parent=screen
 Instance.new('UICorner',panel).CornerRadius=UDim.new(0,12)
-local stroke=Instance.new('UIStroke',panel)
-stroke.Color=Color3.fromRGB(113,93,235)
-stroke.Thickness=2
-local title=Instance.new('TextLabel',panel)
-title.Size=UDim2.new(1,-20,0,28)
-title.Position=UDim2.new(0,10,0,8)
+local border=Instance.new('UIStroke',panel)
+border.Color=Color3.fromRGB(114,92,235)
+border.Thickness=2
+local title=Instance.new('TextLabel')
+title.Position=UDim2.new(.025,0,0,7)
+title.Size=UDim2.new(.95,0,0,29)
 title.BackgroundTransparency=1
 title.Font=Enum.Font.GothamBold
-title.TextSize=15
+title.TextSize=14
+title.TextColor3=Color3.fromRGB(205,194,255)
 title.TextXAlignment=Enum.TextXAlignment.Left
-title.TextColor3=Color3.fromRGB(193,187,255)
-title.Text='KIMS INVENTORY SUMMARY V14'
-local function mkbutton(caption,x,w)
- local b=Instance.new('TextButton',panel)
+title.Text='KIMS V15 | DIRECT DATA FINDER'
+title.Active=true
+title.Parent=panel
+local function btn(name,x,w)
+ local b=Instance.new('TextButton')
  b.Position=UDim2.new(x,0,0,42)
  b.Size=UDim2.new(w,0,0,34)
- b.Text=caption
  b.Font=Enum.Font.GothamBold
  b.TextScaled=true
+ b.Text=name
  b.TextColor3=Color3.new(1,1,1)
- b.BackgroundColor3=Color3.fromRGB(72,61,131)
+ b.BackgroundColor3=Color3.fromRGB(70,59,132)
+ b.Parent=panel
  Instance.new('UICorner',b).CornerRadius=UDim.new(0,6)
  return b
 end
-local readBtn=mkbutton('BACA',.025,.20)
-local liveBtn=mkbutton('LIVE OFF',.24,.23)
-local copyBtn=mkbutton('SALIN',.485,.22)
-local jsonBtn=mkbutton('JSON',.72,.12)
-local closeBtn=mkbutton('X',.855,.11)
-local sc=Instance.new('ScrollingFrame',panel)
-sc.Position=UDim2.new(.025,0,0,86)
-sc.Size=UDim2.new(.95,0,1,-96)
-sc.BackgroundColor3=Color3.fromRGB(22,30,52)
+local copyBtn=btn('SALIN',.025,.29)
+local jsonBtn=btn('DATA',.345,.29)
+local closeBtn=btn('TUTUP',.665,.29)
+local status=Instance.new('TextLabel')
+status.Position=UDim2.new(.025,0,0,82)
+status.Size=UDim2.new(.95,0,0,22)
+status.BackgroundTransparency=1
+status.TextColor3=Color3.fromRGB(111,225,165)
+status.TextXAlignment=Enum.TextXAlignment.Left
+status.TextSize=12
+status.Font=Enum.Font.Code
+status.Text='AUTO: mencari sumber data client...'
+status.Parent=panel
+local sc=Instance.new('ScrollingFrame')
+sc.Position=UDim2.new(.025,0,0,108)
+sc.Size=UDim2.new(.95,0,1,-118)
+sc.BackgroundColor3=Color3.fromRGB(22,29,50)
 sc.BorderSizePixel=0
-sc.ScrollBarThickness=5
+sc.ScrollBarThickness=6
 sc.AutomaticCanvasSize=Enum.AutomaticSize.Y
-Instance.new('UICorner',sc).CornerRadius=UDim.new(0,6)
-local textLabel=Instance.new('TextLabel',sc)
-textLabel.Position=UDim2.new(0,8,0,6)
-textLabel.Size=UDim2.new(1,-18,0,0)
-textLabel.AutomaticSize=Enum.AutomaticSize.Y
-textLabel.BackgroundTransparency=1
-textLabel.TextWrapped=true
-textLabel.TextXAlignment=Enum.TextXAlignment.Left
-textLabel.TextYAlignment=Enum.TextYAlignment.Top
-textLabel.Font=Enum.Font.Code
-textLabel.TextSize=13
-textLabel.TextColor3=Color3.fromRGB(226,235,250)
+sc.Parent=panel
+local output=Instance.new('TextLabel')
+output.Position=UDim2.new(0,7,0,5)
+output.Size=UDim2.new(1,-21,0,0)
+output.AutomaticSize=Enum.AutomaticSize.Y
+output.BackgroundTransparency=1
+output.TextWrapped=true
+output.TextXAlignment=Enum.TextXAlignment.Left
+output.TextYAlignment=Enum.TextYAlignment.Top
+output.TextColor3=Color3.fromRGB(224,232,247)
+output.TextSize=12
+output.Font=Enum.Font.Code
+output.Parent=sc
 
-local counterPaths={
- Fish={'Main','Top','Options','Fish','Label','BagSize'},
- Rods={'Main','Top','Options','Rods','Label','ItemSize'},
- Items={'Main','Top','Options','Inventory','Label','ItemSize'},
-}
-local categories={'Fish','Rods','Baits','Items','Charms','Emotes','Abilities','Pets'}
-local result={}
-local reads=0
-local running=true
-local live=false
-local lastReport=''
-local lastJson=''
-local function exactPath(root,parts)
- local current=root
- for _,name in ipairs(parts) do
-  if not current then return nil end
-  current=current:FindFirstChild(name)
+local stopped=false
+local busy=true
+local MAX_MODULES=18
+local MAX_GRAPH_NODES=3400
+local MAX_TOTAL_KEYS=35000
+local MAX_DEPTH=5
+local MAX_UPVALUE_FUNCTIONS=105
+local MAX_RUN_SECONDS=32 -- cooperative runtime budget (does not cancel a blocked require)
+local MAX_CANDIDATES=20
+local MAX_EXPORT_ROWS=1200
+local MAX_EXPORT_TOTAL=2400
+local counterPairs={}
+local lines={}
+local found={}
+local categorySources={} -- local-only references; never copied into report
+local dataset={version='15',kind='unverified_client_cache_candidates',username=player.Name,userId=player.UserId,placeId=game.PlaceId,guiCounters={},candidates={}}
+local lastJson='{}'
+local function add(t)
+ if #lines<220 then lines[#lines+1]=tostring(t) end
+end
+local function refresh()
+ if screen.Parent and not stopped then output.Text=table.concat(lines,'\n') end
+end
+local function clean(t,lim)
+ return tostring(t or ''):gsub('[\r\n\t]',' '):sub(1,lim or 95)
+end
+local function safePath(obj)
+ local ok,res=pcall(function() return obj:GetFullName() end)
+ return ok and clean(res,130) or clean(obj.Name,80)
+end
+local function safeText(v)
+ if not v then return '' end
+ local ok,res=pcall(function() return tostring(v.Text or '') end)
+ return ok and res or ''
+end
+local function path(root,parts)
+ for _,part in ipairs(parts) do
+  root=root and root:FindFirstChild(part)
  end
- return current
+ return root
 end
-local function numberText(s)
- local t=tostring(s or ''):gsub('[,.%s]','')
- return tonumber(t)
+local function parsePair(raw)
+ local a,b=tostring(raw):match('(%d[%d,.]*)%s*/%s*(%d[%d,.]*)')
+ if not a then return nil end
+ a=tonumber((a:gsub('[,.]','')))
+ b=tonumber((b:gsub('[,.]','')))
+ if a and b and b>0 then return a,b end
+ return nil
 end
-local function pair(s)
- s=tostring(s or '')
- local first,second=s:match('(%d[%d,.]*)%s*/%s*(%d[%d,.]*)')
- if not first then return nil,nil end
- local a,b=numberText(first),numberText(second)
- if not a or not b or b<=0 then return nil,nil end
- return a,b
-end
-local function labelAt(root,parts)
- local n=exactPath(root,parts)
- if n and (n:IsA('TextLabel') or n:IsA('TextButton') or n:IsA('TextBox')) then
-  return tostring(n.Text or ''),n
- end
- return nil,nil
-end
-local function stat(name)
- local folder=player:FindFirstChild('leaderstats')
- local obj=folder and folder:FindFirstChild(name)
- if obj and obj:IsA('ValueBase') then return tostring(obj.Value) end
- return '?'
-end
-local function read()
- reads=reads+1
+local function counters()
  local inv=pg:FindFirstChild('Inventory')
- local lines={'KIMS INVENTORY SUMMARY V14 | GUI ONLY',
-  'USER @'..player.Name..' | UserId='..tostring(player.UserId),
-  'SCAN '..reads..' | GUI '..((inv and inv.Enabled) and 'OPEN' or 'CLOSED/NOT LOADED'),
-  'Counter dibaca dari path pasti V13, bukan jumlah Tile.',
-  ''}
- local output={version='14',kind='gui_inventory_summary',userId=player.UserId,username=player.Name,placeId=game.PlaceId,scannedAt=os.time(),scan=reads,categories={}}
- for _,cat in ipairs(categories) do
-  local path=counterPaths[cat]
-  if path and inv then
-   local raw,node=labelAt(inv,path)
-   local qty,capacity=pair(raw)
-   if qty then
-    local currentStatus=inv.Enabled and 'gui_counter_visible' or 'gui_counter_cached'
-    local rec={status=currentStatus,quantity=qty,capacity=capacity,text=raw,source='PlayerGui/Inventory/'..table.concat(path,'/')}
-    output.categories[cat]=rec
-    lines[#lines+1]=cat..': '..tostring(qty)..' / '..tostring(capacity)..(inv.Enabled and ' [GUI aktif]' or ' [CACHE GUI, bisa tertunda]')
-    lines[#lines+1]='  '..rec.source
-   else
-    output.categories[cat]={status='not_available',source='PlayerGui/Inventory/'..table.concat(path,'/')}
-    lines[#lines+1]=cat..': belum terbaca (BUKAN 0)'
+ local names={
+  {'Fish',{'Main','Top','Options','Fish','Label','BagSize'}},
+  {'Rods',{'Main','Top','Options','Rods','Label','ItemSize'}},
+  {'Items',{'Main','Top','Options','Inventory','Label','ItemSize'}}
+ }
+ for _,n in ipairs(names) do
+  local node=inv and path(inv,n[2])
+  local raw=safeText(node)
+  local a,b=parsePair(raw)
+  if a then
+   counterPairs[n[1]]=a
+   dataset.guiCounters[n[1]]={quantity=a,capacity=b,status=(inv.Enabled and 'GUI_OPEN' or 'CACHED_GUI')}
+   add(n[1]..' '..a..'/'..b..' ('..(inv.Enabled and 'GUI OPEN' or 'GUI CACHED')..')')
+  else add(n[1]..' = not available (NOT zero)') end
+ end
+end
+local keyNames={
+ fish=true,fishes=true,rods=true,['fishing rods']=true,baits=true,items=true,inventory=true,
+ inventories=true,pets=true,potions=true,gears=true,lanterns=true,halos=true,
+ charms=true,['enchant stones']=true,emotes=true,['pet eggs']=true,boats=true,
+ data=true,playerdata=true,profile=true,replica=true,backpack=true,
+ playerinventory=true,inventorydata=true,owneditems=true,collection=true
+}
+local collectionNames={
+ fish=true,fishes=true,rods=true,['fishing rods']=true,baits=true,items=true,
+ inventory=true,inventories=true,pets=true,potions=true,gears=true,lanterns=true,
+ halos=true,charms=true,['enchant stones']=true,emotes=true,['pet eggs']=true,
+ boats=true,backpack=true,owneditems=true,playerinventory=true
+}
+local itemKeys={
+ uid=true,uuid=true,guid=true,itemid=true,fishid=true,weight=true,mutation=true,
+ variant=true,quantity=true,amount=true,count=true,rarity=true,itemname=true,
+ fishname=true,itemtype=true,fish=true,locked=true,level=true
+}
+local allowedExportFields={
+ name=true,itemname=true,fishname=true,id=true,itemid=true,fishid=true,
+ weight=true,mutation=true,variant=true,quantity=true,amount=true,count=true,
+ rarity=true,itemtype=true,locked=true,level=true
+}
+local function lower(k)
+ return type(k)=='string' and k:lower() or ''
+end
+local function tcount(t,limit)
+ local n=0
+ for _ in pairs(t) do
+  n=n+1
+  if n>=limit then return n,true end
+ end
+ return n,false
+end
+local function keyShape(tbl)
+ local n,numKeys,strKeys,arr,other=0,0,0,0,0
+ local sampleItem=0
+ for k,v in pairs(tbl) do
+  n=n+1
+  if type(k)=='number' then numKeys=numKeys+1 elseif type(k)=='string' then strKeys=strKeys+1 end
+  if type(v)=='table' then
+   arr=arr+1
+   if sampleItem<3 then
+    for subK,_ in pairs(v) do
+     if itemKeys[lower(subK)] then other=other+1;sampleItem=sampleItem+1;break end
+    end
+   end
+  end
+  if n>=90 then break end
+ end
+ return 'sample='..n..' keyNum='..numKeys..' keyStr='..strKeys..' itemTables='..arr..' metadataSamples='..other
+end
+local function categoryShape(tbl)
+ local observed={}
+ local kinds={}
+ local n=0
+ for k,v in pairs(tbl) do
+  n=n+1
+  local lk=lower(k)
+  if collectionNames[lk] and type(v)=='table' then
+   observed[#observed+1]=k
+   kinds[#kinds+1]=tostring(k)
+  end
+  if n>=120 then break end
+ end
+ return observed,kinds
+end
+local function displayKey(k)
+ if type(k)=='number' then return '[#]' end
+ if type(k)~='string' then return '[key]' end
+ if keyNames[lower(k)] or allowedExportFields[lower(k)] then return clean(k,28) end
+ return '[entry]'
+end
+local function safeSampleItem(tbl)
+ if type(tbl)~='table' then return nil end
+ local result={}
+ local checked=0
+ for k,v in pairs(tbl) do
+  checked=checked+1
+  if checked>45 then break end
+  if allowedExportFields[lower(k)] then
+   local vt=type(v)
+   if vt=='number' or vt=='boolean' then
+    result[clean(k,24)]=v
+   elseif vt=='string' and #v<=95 and not lower(k):find('id',1,true) then
+    -- IDs or unknown arbitrary strings are not copied to reports.
+    result[clean(k,24)]=clean(v,95)
+   end
+  end
+ end
+ if next(result) then return result end
+ return nil
+end
+local function countMetadataItems(tbl)
+ local total=0
+ local matched=0
+ local example=nil
+ local shapeNum,shapeTable,shapeStr=0,0,0
+ for _,v in pairs(tbl) do
+  total=total+1
+  local vt=type(v)
+  if vt=='table' then
+   shapeTable=shapeTable+1
+   local s=safeSampleItem(v)
+   if s then
+    matched=matched+1
+    if not example then example=s end
+   end
+  elseif vt=='number' then shapeNum=shapeNum+1
+  elseif vt=='string' then shapeStr=shapeStr+1 end
+  if total>=5000 then break end
+ end
+ return total,matched,example,shapeTable,shapeNum,shapeStr
+end
+local function moduleScore(s)
+ s=s:lower()
+ if s:find('replicatedstorage.items.',1,true) then return 0 end
+ if s:find('tilerender',1,true) or s:find('tileinteraction',1,true) then return 0 end
+ if s:find('inventorycontroller',1,true) and not s:find('inventorycontroller.',1,true) then return 100 end
+ if s:find('datacontroller',1,true) or s:find('playerdatacontroller',1,true) then return 96 end
+ if s:find('profilecontroller',1,true) or s:find('replicacontroller',1,true) then return 94 end
+ if s:find('inventorypagination',1,true) then return 92 end
+ if s:find('inventorymapping',1,true) then return 90 end
+ if s:find('inventoryfilter',1,true) then return 84 end
+ if s:find('playerdata',1,true) or s:find('profiledata',1,true) then return 82 end
+ if s:find('inventory',1,true) then return 76 end
+ if s:find('replion',1,true) or s:find('replica',1,true) then return 71 end
+ if s:find('datamanager',1,true) or s:find('dataservice',1,true) then return 65 end
+ if s:find('storecontroller',1,true) or s:find('statecontroller',1,true) then return 60 end
+ return 0
+end
+local function loadedTargets()
+ if type(getloadedmodules)~='function' then return nil,0,'getloadedmodules not available' end
+ local ok,modules=pcall(getloadedmodules)
+ if not ok or type(modules)~='table' then return nil,0,'getloadedmodules failed' end
+ local target={}
+ for i,mod in ipairs(modules) do
+  if typeof(mod)=='Instance' and mod:IsA('ModuleScript') then
+   local s=safePath(mod)
+   local score=moduleScore(s)
+   if score>0 then target[#target+1]={mod=mod,path=s,score=score} end
+  end
+  if i%400==0 then task.wait() end
+ end
+ table.sort(target,function(a,b)
+  if a.score~=b.score then return a.score>b.score end
+  return a.path<b.path
+ end)
+ return target,#modules,nil
+end
+local function retrieveUpvalues(fn)
+ if type(getupvalues)=='function' then
+  local ok,res=pcall(getupvalues,fn)
+  if ok and type(res)=='table' then return res end
+ end
+ if type(debug)=='table' and type(debug.getupvalues)=='function' then
+  local ok,res=pcall(debug.getupvalues,fn)
+  if ok and type(res)=='table' then return res end
+ end
+ return nil
+end
+local function traverseModule(root,label,deadline)
+ local queue={{value=root,depth=0,path=label}}
+ local head=1
+ local seen={}
+ local examined=0
+ local functions=0
+ local budget=0
+ local strong=0
+ while head<=#queue and examined<MAX_GRAPH_NODES and budget<MAX_TOTAL_KEYS and not stopped and os.clock()<deadline do
+  local node=queue[head]
+  head=head+1
+  local v=node.value
+  local typ=type(v)
+  if (typ=='table' or typ=='function') and not seen[v] then
+   seen[v]=true
+   examined=examined+1
+   if typ=='function' then
+    functions=functions+1
+    if functions<=MAX_UPVALUE_FUNCTIONS and node.depth<MAX_DEPTH then
+     local ups=retrieveUpvalues(v)
+     if ups then
+      local i=0
+      for _,uv in pairs(ups) do
+       i=i+1
+       if i>14 then break end
+       if type(uv)=='table' then
+        queue[#queue+1]={value=uv,depth=node.depth+1,path=node.path..'/[upvalue]'}
+       end
+      end
+     end
+    end
+   elseif typ=='table' then
+    local fields={}
+    local score=0
+    local categoryTables={}
+    local entryFields={}
+    local inspectedFields=0
+    for k,cv in pairs(v) do
+     inspectedFields=inspectedFields+1
+     budget=budget+1
+     local lk=lower(k)
+     if collectionNames[lk] and type(cv)=='table' then
+      score=score+5
+      categoryTables[#categoryTables+1]={name=clean(k,35),tbl=cv}
+     end
+     if itemKeys[lk] and type(cv)~='function' then
+      score=score+1
+      entryFields[#entryFields+1]=clean(k,25)
+     end
+     if (type(cv)=='table' or type(cv)=='function') and node.depth<MAX_DEPTH then
+      -- Key names and IDs are NOT exported; unknown keys use '[entry]'.
+      -- Check max 45 children per table and a global traversal limit.
+      if inspectedFields<=45 then
+       queue[#queue+1]={value=cv,depth=node.depth+1,path=node.path..'/'..displayKey(k)}
+      end
+     end
+     if inspectedFields>=110 or budget>=MAX_TOTAL_KEYS then break end
+    end
+    -- A category table is a clue, not proof of ownership.
+    if #categoryTables>0 or #entryFields>=3 then
+     local record={path=node.path,score=score,categoryCount=#categoryTables,category={},itemFields=entryFields}
+     for _,c in ipairs(categoryTables) do
+      local cnt,matched,example,tables,nums,strings=countMetadataItems(c.tbl)
+      local shape={name=c.name,entries=cnt,capped=(cnt>=5000),metadataItems=matched,
+         tableValues=tables,numberValues=nums,stringValues=strings,example=example}
+      record.category[#record.category+1]=shape
+      if matched>0 and tables>0 then score=score+5 end
+      local guiName= c.name=='Fishing Rods' and 'Rods' or (c.name=='Inventory' and 'Items' or c.name)
+      local reference=counterPairs[guiName]
+      if reference and cnt==reference then score=score+3;shape.guiCountMatch=true end
+     end
+     record.score=score
+     if #found<MAX_CANDIDATES*5 then
+      found[#found+1]=record
+      categorySources[record]=categoryTables
+     end
+     if score>=10 then strong=strong+1 end
+    end
+   end
+  end
+  if examined%75==0 then task.wait() end
+ end
+ return examined,functions,strong,head<=#queue
+end
+local function makeReport()
+ table.sort(found,function(a,b)
+  if a.score~=b.score then return a.score>b.score end
+  return a.path<b.path
+ end)
+ add('')
+ add('=== RANKED CLIENT DATA CANDIDATES ===')
+ add('Found structures='..#found..' | showing='..math.min(#found,MAX_CANDIDATES))
+ for index=1,math.min(#found,MAX_CANDIDATES) do
+  local r=found[index]
+  add('C'..index..' score='..r.score..' path='..clean(r.path,115))
+  for j=1,math.min(#r.category,7) do
+   local c=r.category[j]
+   add('  '..c.name..': entries='..c.entries..(c.capped and '+' or '')..
+     ' itemMetadata='..c.metadataItems..' valueTypes[T/N/S]='..c.tableValues..'/'..c.numberValues..'/'..c.stringValues..
+     (c.guiCountMatch and ' COUNTER-MATCH' or ''))
+   if c.example then
+    local labels={}
+    for k,v in pairs(c.example) do labels[#labels+1]=clean(k,20)..'='..clean(v,35) end
+    table.sort(labels)
+    add('    sample: '..table.concat(labels,'; '))
+   end
+  end
+  if #r.itemFields>=3 then add('  item fields: '..table.concat(r.itemFields,', ',1,math.min(#r.itemFields,9))) end
+ end
+ add('')
+ add('=== INTERPRETATION ===')
+ add('COUNTER-MATCH is only a cross-check, NOT proof this is owned inventory.')
+ add('A catalogue/mapping can also have names, IDs, or a similar count.')
+ add('If no candidate is confirmed, this method cannot yet reproduce Zetsu.')
+ add('No game functions, remotes, external HTTP, getgc, or item actions called.')
+ add('Only previously loaded module exports are required; inspect read-only.')
+ add('No credentials, arbitrary memory strings, or account tokens exported.')
+ -- Compact structured export for offline analysis. NO automatic web upload.
+ dataset.candidates={}
+ for i=1,math.min(MAX_EXPORT_ROWS,#found) do
+  local r=found[i]
+  dataset.candidates[#dataset.candidates+1]={path=r.path,score=r.score,categories=r.category}
+ end
+ -- Candidate item detail export, ONLY if multiple metadata-bearing items are visible.
+ -- Still unverified as ownership until compared to GUI and other evidence.
+ dataset.provisionalItems=nil
+ local exported=false
+ for i=1,math.min(#found,MAX_CANDIDATES) do
+  local record=found[i]
+  local strong=false
+  for _,c in ipairs(record.category) do
+   if c.metadataItems>=3 and c.tableValues>=3 then strong=true end
+  end
+  if strong and not record.path:lower():find('inventorymapping',1,true) then
+   local collections={}
+   local totalExported=0
+   local localCats=categorySources[record] or {}
+   for _,cat in ipairs(localCats) do
+    if totalExported>=MAX_EXPORT_TOTAL then break end
+    local name=cat.name
+    local outputRows={}
+    local examined=0
+    for _,item in pairs(cat.tbl) do
+     examined=examined+1
+     if type(item)=='table' then
+      local row=safeSampleItem(item)
+      if row then
+       outputRows[#outputRows+1]=row
+       totalExported=totalExported+1
+      end
+     end
+     if #outputRows>=MAX_EXPORT_ROWS or totalExported>=MAX_EXPORT_TOTAL or examined>=3500 then break end
+    end
+    if #outputRows>0 then
+     collections[name]={exported=#outputRows,items=outputRows}
+    end
+   end
+   if totalExported>0 then
+    dataset.provisionalItems={sourcePath=record.path,verifiedOwnership=false,
+       exportedItemRecords=totalExported,collections=collections}
+    add('')
+    add('PROVISIONAL DATA: '..totalExported..' metadata item records available via DATA button.')
+    add('CAUTION: source is not verified as owned inventory, no website upload.')
+    exported=true
+   end
+   break
+  end
+ end
+ if not exported then
+  add('PROVISIONAL DATA: not available; DATA contains structural summaries only.')
+ end
+ local ok,json=pcall(function() return HttpService:JSONEncode(dataset) end)
+ lastJson=ok and json or '{}'
+ if not ok then add('DATA JSON unavailable; report remains usable.') end
+end
+local function run()
+ local deadline=os.clock()+MAX_RUN_SECONDS
+ add('KIMS V15 | DIRECT CLIENT DATA | READ ONLY')
+ add('USER @'..player.Name..' | ID='..tostring(player.UserId))
+ add('PlaceId='..tostring(game.PlaceId))
+ add('Tidak perlu membuka inventory atau scroll.')
+ add('')
+ add('=== VERIFIED GUI COUNTER PATHS (V14) ===')
+ counters()
+ refresh()
+ task.wait()
+ add('')
+ add('=== TARGETED ALREADY-LOADED MODULES ===')
+ local targets,total,err=loadedTargets()
+ if not targets then
+  add('Cannot inspect exports: '..err)
+  add('No claim of full item inventory.');return
+ end
+ add('Loaded modules='..total..' | candidate module paths='..#targets)
+ local attempted=0
+ local okCount=0
+ for i=1,math.min(#targets,MAX_MODULES) do
+  if stopped or os.clock()>=deadline then break end
+  local candidate=targets[i]
+  attempted=attempted+1
+  status.Text='Reading '..attempted..'/'..math.min(#targets,MAX_MODULES)..' modules'
+  -- getloadedmodules() confirms this module was previously loaded on this client.
+  -- Only retrieve cached ModuleScript export; DO NOT invoke any exported function.
+  local ok,res=pcall(require,candidate.mod)
+  if ok then
+   okCount=okCount+1
+   add('MODULE '..clean(candidate.path,105)..' => '..type(res))
+   if type(res)=='table' or type(res)=='function' then
+    local n,fn,rank,cap=traverseModule(res,candidate.path,deadline)
+    add('  inspected='..n..' exportFunctions='..fn..' highClues='..rank..(cap and ' [capped]' or ''))
    end
   else
-   output.categories[cat]={status='not_available'}
-   lines[#lines+1]=cat..': belum ada counter terverifikasi (BUKAN 0)'
+   add('MODULE '..clean(candidate.path,90)..' => inaccessible')
   end
+  if attempted%3==0 then refresh() end
+  task.wait()
  end
- lines[#lines+1]=''
- lines[#lines+1]='--- ANGKA LAIN (BUKAN TOTAL INVENTORY) ---'
- if inv then
-  local extras={
-   {'Equipped Items',{'Main','Content','Pages','Inventory2','EquipLabel'}},
-   {'Equipped Pets',{'Main','Content','Pages','Pets','EquipLabel'}},
-   {'Charm Remaining',{'Main','Content','Pages','Charms','Main','Info','Display','Inner','Remaining'}}
-  }
-  output.extra={}
-  for _,entry in ipairs(extras) do
-   local value=labelAt(inv,entry[2])
-   if value and value~='' then
-    lines[#lines+1]=entry[1]..': '..value
-    output.extra[entry[1]]=value
-   end
-  end
- end
- lines[#lines+1]='Caught LIFETIME: '..stat('Caught')
- lines[#lines+1]='Rarest Fish: '..stat('Rarest Fish')
- lines[#lines+1]=''
- lines[#lines+1]='Saat inventory ditutup, nilai GUI bisa tertunda.'
- lines[#lines+1]='Counter adalah snapshot GUI pada saat BACA.'
- lines[#lines+1]='Tidak mengekspor daftar item/ID individual.'
- lines[#lines+1]='READ ONLY: no upload, getgc, require, remotes.'
- lastReport=table.concat(lines,'\n')
- local ok,json=pcall(function() return HttpService:JSONEncode(output) end)
- lastJson=ok and json or '{}'
- textLabel.Text=lastReport
+ add('Examined module exports='..attempted..' | readable='..okCount)
+ if os.clock()>=deadline then add('LIMIT: cooperative time budget reached; report is partial.') end
+ makeReport()
+ refresh()
 end
-local function clipboard(value,btn,orig)
- local fn=(type(setclipboard)=='function' and setclipboard) or (type(toclipboard)=='function' and toclipboard)
- if not fn then btn.Text='NO COPY';return end
- local ok=pcall(function() fn(value) end)
- btn.Text=ok and 'TERSALIN' or 'GAGAL'
- task.delay(2,function() if btn.Parent then btn.Text=orig end end)
+local function copy(value,button,normal)
+ local fn=(type(setclipboard)=='function' and setclipboard) or
+  (type(toclipboard)=='function' and toclipboard)
+ if not fn then status.Text='Clipboard unavailable';return end
+ local ok=pcall(fn,value)
+ button.Text=ok and 'TERSALIN' or 'GAGAL'
+ if ok then status.Text='TERSALIN - kirim laporan ke chat' end
+ task.delay(2,function() if button.Parent then button.Text=normal end end)
 end
-readBtn.MouseButton1Click:Connect(read)
-liveBtn.MouseButton1Click:Connect(function()
- live=not live
- liveBtn.Text=live and 'LIVE ON' or 'LIVE OFF'
- if live then read() end
+copyBtn.MouseButton1Click:Connect(function()
+ if busy then status.Text='Tunggu pemeriksaan selesai';return end
+ copy(table.concat(lines,'\n'),copyBtn,'SALIN')
 end)
-copyBtn.MouseButton1Click:Connect(function() read();clipboard(lastReport,copyBtn,'SALIN') end)
-jsonBtn.MouseButton1Click:Connect(function() read();clipboard(lastJson,jsonBtn,'JSON') end)
+jsonBtn.MouseButton1Click:Connect(function()
+ if busy then status.Text='Tunggu pemeriksaan selesai';return end
+ copy(lastJson,jsonBtn,'DATA')
+end)
 closeBtn.MouseButton1Click:Connect(function()
- running=false
+ stopped=true
  screen:Destroy()
 end)
--- Simple optional drag by title (mouse/touch).
+-- Drag panel from title (Android touch supported).
 do
- local UIS=game:GetService('UserInputService')
  local dragging=false
- local startPos,initial
- title.Active=true
+ local startPosition,origin
  title.InputBegan:Connect(function(input)
   if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseButton1 then
-   dragging=true;startPos=input.Position;initial=panel.Position
+   dragging=true;startPosition=input.Position;origin=panel.Position
   end
  end)
  title.InputEnded:Connect(function(input)
   if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end
  end)
- UIS.InputChanged:Connect(function(input)
-  if not running or not dragging or not startPos then return end
-  if input.UserInputType~=Enum.UserInputType.Touch and input.UserInputType~=Enum.UserInputType.MouseMovement then return end
-  local delta=input.Position-startPos
-  panel.Position=UDim2.new(initial.X.Scale,initial.X.Offset+delta.X,initial.Y.Scale,initial.Y.Offset+delta.Y)
+ UserInputService.InputChanged:Connect(function(input)
+  if stopped or not dragging or not startPosition then return end
+  if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseMovement then
+   local delta=input.Position-startPosition
+   panel.Position=UDim2.new(origin.X.Scale,origin.X.Offset+delta.X,origin.Y.Scale,origin.Y.Offset+delta.Y)
+  end
  end)
 end
-read()
+refresh()
 task.spawn(function()
- while running and screen.Parent do
-  task.wait(5)
-  if running and live and screen.Parent then pcall(read) end
+ local ok,err=pcall(run)
+ busy=false
+ if not stopped then
+  if not ok then
+   add('ERROR: '..clean(err,150))
+   refresh()
+  end
+  status.Text=ok and 'SELESAI | klik SALIN' or 'ERROR | klik SALIN'
  end
 end)
