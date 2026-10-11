@@ -1,4 +1,4 @@
--- KIMS TECH | INVENTORY READER V9 - AUDIT FIX
+-- KIMS TECH | INVENTORY READER V9.1 - FULL CACHE AUDIT
 -- Read-only. No remote calls, no HTTP requests, no require, no changes to inventory.
 -- BACA once to inspect cached category tables. SALIN copies summary; DATA copies
 -- whitelisted numeric item ID -> numeric quantity snapshot (if found).
@@ -9,11 +9,11 @@ local HttpService = game:GetService('HttpService')
 local player = Players.LocalPlayer
 if not player then return end
 local pg = player:WaitForChild('PlayerGui')
-local old = pg:FindFirstChild('KIMSInventoryV9')
+local old = pg:FindFirstChild('KIMSInventoryV91')
 if old then old:Destroy() end
 
 local screen = Instance.new('ScreenGui')
-screen.Name = 'KIMSInventoryV9'
+screen.Name = 'KIMSInventoryV91'
 screen.ResetOnSpawn = false
 screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screen.Parent = pg
@@ -43,7 +43,7 @@ local function label(parent,txt,pos,size,color)
     t.Parent = parent
     return t
 end
-local title = label(panel,'KIMS V9 | INVENTORY AUDIT FIX',UDim2.new(.02,0,.012,0),UDim2.new(.96,0,0,26),Color3.fromRGB(190,180,255))
+local title = label(panel,'KIMS V9.1 | CACHE AUDIT',UDim2.new(.02,0,.012,0),UDim2.new(.96,0,0,26),Color3.fromRGB(190,180,255))
 title.Font = Enum.Font.GothamBold
  title.TextSize = 15
 local function button(txt,x)
@@ -83,7 +83,7 @@ local categories = {
 local log = {}
 local busy,done,closed = false,false,false
 local exportText = nil
-local MAX_GC = 16000
+local MAX_GC = 300000  -- One bounded pass, rather than first 16,000 only.
 local MAX_CATEGORY_KEYS = 4000
 local function push(s)
     if #log < 130 then log[#log+1] = tostring(s) end
@@ -184,10 +184,10 @@ local function makeExport(summary)
     return nil
 end
 
-push('KIMS V9 | READ ONLY | NO UPLOAD')
+push('KIMS V9.1 | READ ONLY | NO UPLOAD')
 push('USER @'..player.Name..' | ID='..player.UserId)
 push('AUDIT: V8.2 ignored string-digit ID keys.')
-push('Scan cache once. Output remains HYPOTHESIS until validated.')
+push('Scan one bounded GC snapshot. Fish count changes as you catch.')
 push('BACA = scan | SALIN = report | DATA = numeric ID map JSON')
 render()
 
@@ -203,7 +203,8 @@ local function run()
     local ok,objects=pcall(getgc,true)
     if not ok or type(objects)~='table' then push('ERROR: getgc(true) failed');return end
     local limit=math.min(#objects,MAX_GC)
-    push('GC total='..#objects..' | inspected='..limit)
+    push('GC total='..#objects..' | checking up to='..limit)
+    if limit < #objects then push('WARNING: GC list capped; some entries not inspected.') end
     local matched=0
     local first=nil
     local firstFish=nil
@@ -231,13 +232,15 @@ local function run()
                 end
             end
         end
-        if i%350==0 then
+        if i%1200==0 then
             status.Text='BACA '..i..'/'..limit
             task.wait()
         end
     end
     push('')
     push('Candidates='..matched..' | first index='..tostring(firstIndex or '?'))
+    push('Inspected='..limit..' / '..#objects..' GC objects')
+    if matched==0 then push('No matches in this GC snapshot; NOT proof inventory cache is missing.') end
     if first and first.Fish then
         local fish=first.Fish
         if fish.numeric>0 and fish.numeric==fish.count and fish.fractions==0 and fish.negative==0 and not fish.truncated then
@@ -245,10 +248,11 @@ local function run()
         else
             push('Fish map INCONCLUSIVE; inspect types and counts.')
         end
-        push('Baseline 213 (old snapshot): delta='..fmt(fish.sum-213)..'; inventory may have changed.')
+        push('Fish count is dynamic; compare with in-game number at scan time.')
+        push('A matching SUM alone is NOT proof this is owned inventory.')
     end
     push('Data exported only on DATA click; no automatic uploads.')
-    push('CAUTION: matching 213 alone does not prove item ownership.')
+    push('Validate against a contemporaneous count; fishing changes totals.')
     objects=nil
 end
 
