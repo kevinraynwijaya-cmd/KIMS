@@ -1,40 +1,40 @@
--- KIMS TECH | INVENTORY READER V9.1 - FULL CACHE AUDIT
--- Read-only. No remote calls, no HTTP requests, no require, no changes to inventory.
--- BACA once to inspect cached category tables. SALIN copies summary; DATA copies
--- whitelisted numeric item ID -> numeric quantity snapshot (if found).
--- IMPORTANT: cached table is NOT proven to represent player-owned inventory.
+-- KIMS TECH | INVENTORY DATA TRACE V10
+-- Single-run read-only audit for Fish It / Roblox client.
+-- NO require(), no remote calls, no HTTP, no file writes, no item changes.
+-- Does not claim that arbitrary cache tables represent owned inventory.
+-- Created for manual execution in Delta Android. Open panel > LACAK > SALIN.
 
 local Players = game:GetService('Players')
-local HttpService = game:GetService('HttpService')
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
 local player = Players.LocalPlayer
 if not player then return end
 local pg = player:WaitForChild('PlayerGui')
-local old = pg:FindFirstChild('KIMSInventoryV91')
+local old = pg:FindFirstChild('KIMSDataTraceV10')
 if old then old:Destroy() end
 
 local screen = Instance.new('ScreenGui')
-screen.Name = 'KIMSInventoryV91'
+screen.Name = 'KIMSDataTraceV10'
 screen.ResetOnSpawn = false
 screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screen.Parent = pg
 
 local panel = Instance.new('Frame')
-panel.Size = UDim2.new(.94,0,.77,0)
-panel.Position = UDim2.new(.03,0,.10,0)
+panel.Size = UDim2.new(.94,0,.76,0)
+panel.Position = UDim2.new(.03,0,.11,0)
 panel.BackgroundColor3 = Color3.fromRGB(12,17,34)
 panel.BorderSizePixel = 0
 panel.Parent = screen
 Instance.new('UICorner',panel).CornerRadius = UDim.new(0,12)
-local stroke = Instance.new('UIStroke',panel)
-stroke.Color = Color3.fromRGB(108,91,225)
-stroke.Thickness = 2
+local border = Instance.new('UIStroke',panel)
+border.Thickness = 2
+border.Color = Color3.fromRGB(108,91,225)
 
-local function label(parent,txt,pos,size,color)
+local function label(parent,s,pos,size,color)
     local t = Instance.new('TextLabel')
     t.BackgroundTransparency = 1
     t.Position = pos
     t.Size = size
-    t.Text = txt
+    t.Text = s
     t.Font = Enum.Font.Code
     t.TextSize = 12
     t.TextColor3 = color or Color3.fromRGB(230,235,250)
@@ -43,13 +43,13 @@ local function label(parent,txt,pos,size,color)
     t.Parent = parent
     return t
 end
-local title = label(panel,'KIMS V9.1 | CACHE AUDIT',UDim2.new(.02,0,.012,0),UDim2.new(.96,0,0,26),Color3.fromRGB(190,180,255))
-title.Font = Enum.Font.GothamBold
- title.TextSize = 15
+local heading = label(panel,'KIMS V10 | TARGETED DATA TRACE',UDim2.new(.02,0,.012,0),UDim2.new(.96,0,0,27),Color3.fromRGB(190,180,255))
+heading.Font = Enum.Font.GothamBold
+heading.TextSize = 15
 local function button(txt,x)
     local b = Instance.new('TextButton')
     b.Position = UDim2.new(x,0,0,39)
-    b.Size = UDim2.new(.225,0,0,35)
+    b.Size = UDim2.new(.29,0,0,35)
     b.Text = txt
     b.Font = Enum.Font.GothamBold
     b.TextScaled = true
@@ -59,231 +59,309 @@ local function button(txt,x)
     Instance.new('UICorner',b).CornerRadius = UDim.new(0,6)
     return b
 end
-local readBtn = button('BACA',.02)
-local copyBtn = button('SALIN',.265)
-local exportBtn = button('DATA',.51)
-local closeBtn = button('TUTUP',.755)
-local status = label(panel,'Siap. Tekan BACA sekali.',UDim2.new(.02,0,0,83),UDim2.new(.96,0,0,20),Color3.fromRGB(110,226,165))
-local scroll = Instance.new('ScrollingFrame')
-scroll.Size = UDim2.new(.96,0,1,-119)
-scroll.Position = UDim2.new(.02,0,0,108)
-scroll.BackgroundColor3 = Color3.fromRGB(20,27,46)
-scroll.BorderSizePixel = 0
-scroll.ScrollBarThickness = 6
-scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-scroll.Parent = panel
-local output = label(scroll,'',UDim2.new(0,6,0,6),UDim2.new(1,-22,0,0))
-output.TextWrapped = true
-output.AutomaticSize = Enum.AutomaticSize.Y
+local runBtn = button('LACAK',.02)
+local copyBtn = button('SALIN',.35)
+local closeBtn = button('TUTUP',.68)
+local status = label(panel,'Siap. Tekan LACAK sekali.',UDim2.new(.02,0,0,83),UDim2.new(.96,0,0,20),Color3.fromRGB(110,226,165))
+local sc = Instance.new('ScrollingFrame')
+sc.Position = UDim2.new(.02,0,0,108)
+sc.Size = UDim2.new(.96,0,1,-117)
+sc.BackgroundColor3 = Color3.fromRGB(20,27,46)
+sc.BorderSizePixel = 0
+sc.ScrollBarThickness = 7
+sc.AutomaticCanvasSize = Enum.AutomaticSize.Y
+sc.Parent = panel
+local out = label(sc,'',UDim2.new(0,7,0,7),UDim2.new(1,-23,0,0))
+out.TextWrapped = true
+out.AutomaticSize = Enum.AutomaticSize.Y
 
-local categories = {
-    'Fish','Fishing Rods','Baits','Potions','Pets','Pet Eggs',
-    'Enchant Stones','Charms','Boats','Gears','Lanterns','Halos','Emotes'
-}
-local log = {}
+local lines = {}
 local busy,done,closed = false,false,false
-local exportText = nil
-local MAX_GC = 300000  -- One bounded pass, rather than first 16,000 only.
-local MAX_CATEGORY_KEYS = 4000
-local function push(s)
-    if #log < 130 then log[#log+1] = tostring(s) end
+local MAX_GC = 330000
+local MAX_CANDIDATES = 40
+local MAX_KEYS = 550
+local MAX_FUNCTIONS_ENV = 8500
+local MAX_CONTROLLER_MATCHES = 16
+local MAX_UPVALUES = 22
+local CATEGORY_NAMES = {'Fish','Fishing Rods','Baits','Potions','Pets','Pet Eggs','Enchant Stones','Charms','Boats','Gears','Lanterns','Halos','Emotes'}
+
+local function add(s)
+    if #lines < 245 then lines[#lines+1] = tostring(s) end
 end
-local function render()
-    if not closed then output.Text = table.concat(log,'\n') end
+local function redraw()
+    if not closed then out.Text = table.concat(lines,'\n') end
 end
-local function fmt(v)
-    if type(v) ~= 'number' then return tostring(v) end
-    if v == math.floor(v) and math.abs(v) < 1e14 then return string.format('%.0f',v) end
-    return tostring(v)
+local function short(s,maxlen)
+    return tostring(s or ''):gsub('[\r\n]',' '):sub(1,maxlen or 100)
 end
-local function finite(v)
-    return type(v) == 'number' and v == v and v ~= math.huge and v ~= -math.huge
-end
--- FIX V8.2: number keys AND digit-only string keys are accepted.
--- The V8.1 inspector explicitly printed digit-only string keys; numeric
--- keys would have appeared as '(number)' in that version.
-local function itemKey(k)
-    if type(k) == 'number' then
-        if not finite(k) or k < 0 or k ~= math.floor(k) then return nil end
-        return fmt(k),'number'
+local function countTable(t,limit)
+    if type(t) ~= 'table' then return 0,false end
+    local n=0
+    for _ in pairs(t) do
+        n=n+1
+        if n>=limit then return n,true end
     end
-    if type(k) == 'string' and #k <= 20 and k:match('^%d+$') then
-        return k,'string'
-    end
-    return nil
+    return n,false
 end
-local function inspectCategory(t)
-    local r = {
-        count=0, digitStrings=0, numberKeys=0, numeric=0,
-        positive=0, zero=0, negative=0, fractions=0, other=0,
-        sum=0, max=nil, truncated=false, samples={}, export={}
-    }
+local function shape(t)
+    if type(t)~='table' then return type(t) end
+    local n,numVal,strVal,tblVal,otherVal,numKey,strKey,otherKey=0,0,0,0,0,0,0,0
+    local digitKey=0
     for k,v in pairs(t) do
-        r.count = r.count + 1
-        if r.count > MAX_CATEGORY_KEYS then
-            r.truncated=true
-            break
-        end
-        local id,kind = itemKey(k)
-        if kind == 'string' then r.digitStrings = r.digitStrings + 1 end
-        if kind == 'number' then r.numberKeys = r.numberKeys + 1 end
-        if id and finite(v) then
-            r.numeric=r.numeric+1
-            r.sum=r.sum+v
-            if v>0 then r.positive=r.positive+1
-            elseif v==0 then r.zero=r.zero+1
-            else r.negative=r.negative+1 end
-            if v~=math.floor(v) then r.fractions=r.fractions+1 end
-            if r.max==nil or v>r.max then r.max=v end
-            if #r.samples<8 then r.samples[#r.samples+1]=id..'='..fmt(v) end
-            -- Only export plausible nonnegative integer quantities.
-            if v>=0 and v==math.floor(v) then r.export[id]=v end
-        else
-            r.other=r.other+1
-        end
+        n=n+1
+        if type(k)=='number' then numKey=numKey+1
+        elseif type(k)=='string' then
+            strKey=strKey+1
+            if #k<=22 and k:match('^%d+$') then digitKey=digitKey+1 end
+        else otherKey=otherKey+1 end
+        if type(v)=='number' then numVal=numVal+1
+        elseif type(v)=='string' then strVal=strVal+1
+        elseif type(v)=='table' then tblVal=tblVal+1
+        else otherVal=otherVal+1 end
+        if n>=MAX_KEYS then break end
     end
+    local more=(n>=MAX_KEYS) and '+' or ''
+    local r='N='..n..more..' K[num/str/digit/other]='..numKey..'/'..strKey..'/'..digitKey..'/'..otherKey
+    r=r..' V[num/str/table/other]='..numVal..'/'..strVal..'/'..tblVal..'/'..otherVal
     return r
 end
-local function summaryFor(t)
-    local result = {}
-    for _,cat in ipairs(categories) do
-        local child=rawget(t,cat)
-        if type(child)=='table' then result[cat]=inspectCategory(child) end
+local function categoryCount(root)
+    if type(root)~='table' then return 0 end
+    local n=0
+    for _,cat in ipairs(CATEGORY_NAMES) do
+        if type(rawget(root,cat))=='table' then n=n+1 end
     end
-    return result
+    return n
 end
-local function reportSummary(summary,labelText)
-    push(labelText)
-    for _,cat in ipairs(categories) do
-        local r = summary[cat]
-        if r then
-            push(cat..': IDs='..r.count..' numeric='..r.numeric..' sum='..fmt(r.sum)..' +='..r.positive..' zero='..r.zero..' other='..r.other)
-            if cat=='Fish' then
-                push('  Key string='..r.digitStrings..' | key number='..r.numberKeys..' | fractional='..r.fractions..' | negative='..r.negative)
-                push('  Samples: '..(#r.samples>0 and table.concat(r.samples,', ') or '(none)'))
-            end
-            if r.truncated then push('  WARNING category truncated') end
+local function categoryBrief(root)
+    local result={}
+    for _,cat in ipairs(CATEGORY_NAMES) do
+        local t=rawget(root,cat)
+        if type(t)=='table' then
+            local n,more=countTable(t,MAX_KEYS)
+            result[#result+1]=cat..'='..n..(more and '+' or '')
         end
     end
+    return #result>0 and table.concat(result, ' | ') or '(no category tables)'
 end
-local function makeExport(summary)
-    local categoriesOut={}
-    for _,cat in ipairs(categories) do
-        local r=summary[cat]
-        if r then categoriesOut[cat]=r.export end
-    end
-    local data={
-        format='kims_inventory_candidate_v9',
-        confirmed_owned_inventory=false,
-        userId=player.UserId,
-        placeId=game.PlaceId,
-        categories=categoriesOut
-    }
-    local ok,json=pcall(function() return HttpService:JSONEncode(data) end)
-    if ok and type(json)=='string' then return json end
-    return nil
+local function targetText(src)
+    local s=tostring(src or ''):lower()
+    return s:find('inventorycontroller',1,true) or s:find('inventorymapping',1,true)
 end
-
-push('KIMS V9.1 | READ ONLY | NO UPLOAD')
-push('USER @'..player.Name..' | ID='..player.UserId)
-push('AUDIT: V8.2 ignored string-digit ID keys.')
-push('Scan one bounded GC snapshot. Fish count changes as you catch.')
-push('BACA = scan | SALIN = report | DATA = numeric ID map JSON')
-render()
-
-local function run()
-    if type(getgc)~='function' then
-        push('ERROR: getgc not supported.')
-        return
+local function moduleSource(fn)
+    local names={}
+    if type(debug)=='table' and type(debug.info)=='function' then
+        local ok,r=pcall(debug.info,fn,'s')
+        if ok and type(r)=='string' then names[#names+1]=r end
     end
-    push('')
-    push('=== CORRECTED CACHE CHECK ===')
-    render()
-    task.wait()
-    local ok,objects=pcall(getgc,true)
-    if not ok or type(objects)~='table' then push('ERROR: getgc(true) failed');return end
-    local limit=math.min(#objects,MAX_GC)
-    push('GC total='..#objects..' | checking up to='..limit)
-    if limit < #objects then push('WARNING: GC list capped; some entries not inspected.') end
-    local matched=0
-    local first=nil
-    local firstFish=nil
-    local firstIndex=nil
-    for i=1,limit do
-        if closed then return end
-        local t=objects[i]
-        if type(t)=='table' and type(rawget(t,'Fish'))=='table' and type(rawget(t,'Potions'))=='table' then
-            matched=matched+1
-            if matched<=2 then
-                local summary=summaryFor(t)
-                reportSummary(summary,'CANDIDATE '..matched..' | gc index='..i)
-                if matched==1 then
-                    first=summary
-                    firstFish=rawget(t,'Fish')
-                    firstIndex=i
-                    exportText=makeExport(summary)
-                else
-                    local f=summary.Fish
-                    local a=first and first.Fish
-                    if f and a then
-                        push('COMPARE Fish: IDs '..(f.count==a.count and 'same' or 'different')..', SUM '..(f.sum==a.sum and 'same' or 'different'))
+    if type(debug)=='table' and type(debug.getinfo)=='function' then
+        local ok,r=pcall(debug.getinfo,fn)
+        if ok and type(r)=='table' then
+            if type(r.source)=='string' then names[#names+1]=r.source end
+            if type(r.short_src)=='string' then names[#names+1]=r.short_src end
+        end
+    end
+    return table.concat(names,' | ')
+end
+local function envScript(fn)
+    if type(getfenv)~='function' then return '' end
+    local ok,env=pcall(getfenv,fn)
+    if not ok or type(env)~='table' then return '' end
+    local s=rawget(env,'script')
+    if typeof(s)=='Instance' then
+        local good,p=pcall(function() return s:GetFullName() end)
+        if good then return tostring(p) end
+    end
+    return ''
+end
+local function getUpvaluesSafe(fn)
+    if type(getupvalues)=='function' then
+        local ok,vals=pcall(getupvalues,fn)
+        if ok and type(vals)=='table' then return vals,'getupvalues' end
+    end
+    if type(debug)=='table' and type(debug.getupvalues)=='function' then
+        local ok,vals=pcall(debug.getupvalues,fn)
+        if ok and type(vals)=='table' then return vals,'debug.getupvalues' end
+    end
+    return nil,'not available'
+end
+local function describeUpvalues(fn,index,src)
+    add('FUNCTION '..index..': '..short(src,105))
+    local ups,how=getUpvaluesSafe(fn)
+    if type(ups)~='table' then add('  upvalues='..how); return end
+    local seen=0
+    local tables=0
+    local useful=0
+    for k,v in pairs(ups) do
+        seen=seen+1
+        if seen>MAX_UPVALUES then break end
+        if type(v)=='table' then
+            tables=tables+1
+            local c=categoryCount(v)
+            local nested={}
+            local checked=0
+            if c==0 then
+                for nk,nv in pairs(v) do
+                    checked=checked+1
+                    if checked>36 then break end
+                    if type(nv)=='table' and categoryCount(nv)>0 then
+                        nested[#nested+1]='category-map-'..tostring(#nested+1)
                     end
-                    push('Shared Fish table='..tostring(rawequal(firstFish,rawget(t,'Fish'))))
+                    if #nested>=3 then break end
                 end
             end
+            if c>0 or #nested>0 then
+                useful=useful+1
+                add('  upvalue['..short(k,25)..'] categories='..c..' nested={'..table.concat(nested,',')..'}')
+                if c>0 then add('    '..categoryBrief(v)) end
+            end
         end
-        if i%1200==0 then
-            status.Text='BACA '..i..'/'..limit
+    end
+    add('  upvalues checked='..math.min(seen,MAX_UPVALUES)..' | tables='..tables..' | category matches='..useful)
+end
+local function modules()
+    local folders=ReplicatedStorage:FindFirstChild('Controllers')
+    local inv=folders and folders:FindFirstChild('InventoryController')
+    local shared=ReplicatedStorage:FindFirstChild('Shared')
+    local mapping=shared and shared:FindFirstChild('InventoryMapping')
+    add('InventoryController present='..tostring(inv~=nil)..' ['..(inv and inv.ClassName or '?')..']')
+    add('InventoryMapping present='..tostring(mapping~=nil)..' ['..(mapping and mapping.ClassName or '?')..']')
+    if type(getloadedmodules)=='function' then
+        local ok,m=pcall(getloadedmodules)
+        if ok and type(m)=='table' then
+            local hits=0
+            for _,mod in ipairs(m) do
+                if typeof(mod)=='Instance' then
+                    local s=mod:GetFullName()
+                    if targetText(s) then
+                        hits=hits+1
+                        if hits<=10 then add('LOADED '..short(s,100)) end
+                    end
+                end
+            end
+            add('Loaded modules='..#m..' | target='..hits)
+        else add('getloadedmodules() unavailable at runtime') end
+    end
+end
+
+add('KIMS V10 | READ ONLY | NO UPLOAD')
+add('USER @'..player.Name..' | ID='..tostring(player.UserId))
+add('Goal: trace controller closures AND rank ALL category maps.')
+add('No require, remotes, HTTP, clipboard until SALIN.')
+add('Do not interpret keys/counts as owned inventory.')
+redraw()
+
+local function audit()
+    add('')
+    add('=== VERIFIED MODULE PATHS ===')
+    modules()
+    if type(getgc)~='function' then
+        add('STOP: getgc unsupported in executor.')
+        return
+    end
+    add('')
+    add('=== ONE MEMORY SNAPSHOT ===')
+    redraw()
+    task.wait()
+    local ok,objects=pcall(getgc,true)
+    if not ok or type(objects)~='table' then add('ERROR: getgc(true) failed'); return end
+    local total=#objects
+    local limit=math.min(total,MAX_GC)
+    add('GC objects='..total..' | inspection limit='..limit)
+    local candidates={}
+    local matchedFunctions={}
+    local functionCount=0
+    local envChecks=0
+    local catHits=0
+    for i=1,limit do
+        if closed then return end
+        local obj=objects[i]
+        local typ=type(obj)
+        if typ=='table' then
+            local fish=rawget(obj,'Fish')
+            local potions=rawget(obj,'Potions')
+            if type(fish)=='table' and type(potions)=='table' then
+                catHits=catHits+1
+                if #candidates < MAX_CANDIDATES then
+                    candidates[#candidates+1]={index=i,root=obj,score=categoryCount(obj)}
+                end
+            end
+        elseif typ=='function' then
+            functionCount=functionCount+1
+            -- Lua closures may include ModuleScript paths in debug source or environment.
+            -- These are METADATA reads; the function is never called.
+            local src=moduleSource(obj)
+            local match=targetText(src)
+            if not match and envChecks<MAX_FUNCTIONS_ENV then
+                envChecks=envChecks+1
+                local env=envScript(obj)
+                if targetText(env) then
+                    match=true
+                    src=env
+                end
+            end
+            if match and #matchedFunctions<MAX_CONTROLLER_MATCHES then
+                matchedFunctions[#matchedFunctions+1]={fn=obj,index=i,source=src}
+            end
+        end
+        if i%850==0 then
+            status.Text='LACAK '..i..'/'..limit
             task.wait()
         end
     end
-    push('')
-    push('Candidates='..matched..' | first index='..tostring(firstIndex or '?'))
-    push('Inspected='..limit..' / '..#objects..' GC objects')
-    if matched==0 then push('No matches in this GC snapshot; NOT proof inventory cache is missing.') end
-    if first and first.Fish then
-        local fish=first.Fish
-        if fish.numeric>0 and fish.numeric==fish.count and fish.fractions==0 and fish.negative==0 and not fish.truncated then
-            push('Fish resembles numeric quantity map (NOT confirmed owned items).')
-        else
-            push('Fish map INCONCLUSIVE; inspect types and counts.')
+    add('')
+    add('=== ALL CATEGORY CANDIDATES ===')
+    add('Candidates='..catHits..' | showing='..#candidates..' (not only first two)')
+    for i,entry in ipairs(candidates) do
+        add('C'..i..' GC#'..entry.index..' category tables='..entry.score..' | '..categoryBrief(entry.root))
+        if type(rawget(entry.root,'Fish'))=='table' then
+            add('  Fish '..shape(rawget(entry.root,'Fish')))
         end
-        push('Fish count is dynamic; compare with in-game number at scan time.')
-        push('A matching SUM alone is NOT proof this is owned inventory.')
+        if i%5==0 then task.wait() end
     end
-    push('Data exported only on DATA click; no automatic uploads.')
-    push('Validate against a contemporaneous count; fishing changes totals.')
+    if catHits>MAX_CANDIDATES then add('WARNING: extra candidates omitted from report') end
+    add('')
+    add('=== INVENTORY CONTROLLER CLOSURES ===')
+    add('GC functions='..functionCount..' | env checks='..envChecks..' | target closures='..#matchedFunctions)
+    for _,record in ipairs(matchedFunctions) do
+        describeUpvalues(record.fn,record.index,record.source)
+        task.wait()
+    end
+    if #matchedFunctions==0 then
+        add('No controller closures mapped. Executor may not expose script origins.')
+        add('This does NOT mean the game has no inventory cache.')
+    end
+    if total>limit then add('WARNING: GC inspection was capped') end
+    add('')
+    add('=== INTERPRETATION ===')
+    add('Candidate maps are not verified owned items. SUM is intentionally omitted.')
+    add('Next step depends on controller upvalue links, NOT arbitrary GC index.')
+    add('Never send credentials or API keys in report.')
     objects=nil
+    candidates=nil
+    matchedFunctions=nil
 end
 
-readBtn.MouseButton1Click:Connect(function()
+runBtn.MouseButton1Click:Connect(function()
     if busy or done then return end
     busy=true
-    status.Text='Membaca satu kali...'
+    done=true
+    status.Text='Sedang memeriksa satu snapshot...'
     task.spawn(function()
-        local ok,err=pcall(run)
-        if not ok then push('ERROR: '..tostring(err):sub(1,180)) end
+        local ok,err=pcall(audit)
+        if not ok then add('ERROR: '..short(err,180)) end
         if not closed then
-            done=true
+            redraw()
+            status.Text=ok and 'Selesai. Tekan SALIN.' or 'Audit error. Tekan SALIN.'
             busy=false
-            status.Text=ok and 'Selesai. SALIN hasil / DATA JSON.' or 'Ada error, SALIN laporan.'
-            render()
         end
     end)
 end)
-local function clipboard(text)
-    local fn=(type(setclipboard)=='function' and setclipboard) or (type(toclipboard)=='function' and toclipboard)
-    if not fn then status.Text='Clipboard tidak tersedia';return end
-    local ok=pcall(fn,text)
-    status.Text=ok and 'TERSALIN! Paste ke chat.' or 'Gagal salin'
-end
 copyBtn.MouseButton1Click:Connect(function()
-    clipboard(table.concat(log,'\n'))
-end)
-exportBtn.MouseButton1Click:Connect(function()
-    if not done then status.Text='Tekan BACA dahulu';return end
-    if not exportText then status.Text='Belum ada data ekspor';return end
-    clipboard(exportText)
+    local fn=(type(setclipboard)=='function' and setclipboard) or (type(toclipboard)=='function' and toclipboard)
+    if not fn then status.Text='Clipboard tidak tersedia'; return end
+    local ok=pcall(fn,table.concat(lines,'\n'))
+    status.Text=ok and 'TERSALIN. Kirim hasilnya ke chat.' or 'Gagal menyalin'
 end)
 closeBtn.MouseButton1Click:Connect(function()
     closed=true
