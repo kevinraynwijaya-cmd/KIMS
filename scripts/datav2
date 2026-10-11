@@ -1,352 +1,336 @@
--- KIMS TECH | ZETSU BEHAVIOR MONITOR V1 (METADATA ONLY)
--- Run FIRST, then run your OWN normal Zetsu loader in the SAME Roblox session.
--- For observing your own client only. No request body/headers/keys/item contents.
--- Does not require Zetsu, does not alter inventory, does not transmit anything.
--- Hooks may be unsupported/conflict with other scripts; use a fresh game session.
+-- KIMS TECH | ZETSU POST SHAPE MONITOR V2
+-- Diagnostic only, intended for observing YOUR OWN normal Zetsu session.
+-- Records ONLY safe structural aggregates for POST requests to stats.zetsu.lol.
+-- NEVER logs URLs, query strings, headers, API keys, usernames, values, or request body.
+-- Nothing is uploaded. Does NOT change inventory or game remotes.
+-- Run FIRST in a fresh Roblox/Delta session, then use your own regular Zetsu loader.
 
 local Players = game:GetService('Players')
-local localPlayer = Players.LocalPlayer
-if not localPlayer then return end
-local pg = localPlayer:WaitForChild('PlayerGui')
-local clockStart = os.clock()
+local HttpService = game:GetService('HttpService')
+local plr = Players.LocalPlayer
+if not plr then return end
+local pg = plr:WaitForChild('PlayerGui')
 local env = (type(getgenv) == 'function' and getgenv()) or _G
-
-if type(env.KIMS_ZETSU_MONITOR_V1) == 'table' then
-    local prior = env.KIMS_ZETSU_MONITOR_V1
-    prior.active = false
-    if type(prior.close) == 'function' then pcall(prior.close) end
+local key = 'KIMS_ZETSU_SHAPE_MONITOR_V2'
+if type(env[key]) == 'table' then
+    local prev = env[key]
+    prev.active = false
+    if type(prev.close) == 'function' then pcall(prev.close) end
 end
 
-local state = {
-    active = true, stopped = false, marker = nil, events = {}, groups = {},
-    groupKeys = {}, hooks = {}, firstModules = {}, dropped = 0, monitored = 0,
-    baseModules = 0, lastModules = 0, connections = {}, moduleReport = nil
+local started = os.clock()
+local S = {
+    active=true, stopped=false, marker=nil, attempts=0, hooks={}, posts={},
+    dropped=0, diagnostics={}, exceptions=0, close=nil,
 }
-env.KIMS_ZETSU_MONITOR_V1 = state
+env[key] = S
+local function sec() return math.max(0, math.floor(os.clock()-started)) end
+local function pushPost(row)
+    if not S.active then return end
+    S.attempts=S.attempts+1
+    if #S.posts < 18 then table.insert(S.posts,row) else S.dropped=S.dropped+1 end
+end
+local function methodOf(o)
+    if type(o) ~= 'table' then return 'GET' end
+    local m=o.Method or o.method or 'GET'
+    return type(m)=='string' and m:upper() or 'GET'
+end
+local function getHost(url)
+    if type(url)~='string' then return nil end
+    local raw=url:match('^%a[%w+.-]*://([^/?#]+)')
+    if not raw then return nil end
+    -- Compare only hostname; never print full URLs, paths, queries or credentials.
+    raw=raw:match('@(.+)$') or raw
+    raw=raw:gsub(':%d+$',''):lower()
+    return raw
+end
 
-local function tidy(s, limit)
-    s = tostring(s or ''):gsub('[\r\n\t]', ' ')
-    if #s > (limit or 95) then return s:sub(1, limit or 95) .. '...' end
-    return s
+-- Static safe field allowlist. We never print names of unknown/private keys.
+local KINDS={
+    fish='Fish',fishes='Fish',fishingrods='Rods',rods='Rods',rod='Rods',
+    baits='Baits',bait='Baits',pets='Pets',pet='Pets',
+    items='Items',item='Items',gears='Gear',gear='Gear',
+    enchantstones='Stones',stones='Stones',stone='Stones',
+    charms='Charms',emotes='Emotes',abilities='Abilities',
+    potions='Potions',boats='Boats',lanterns='Lanterns',halos='Halos',
+}
+local SHAPE={
+    inventory='inventory',inventories='inventory',data='data',
+    collections='collection',collection='collection',
+    quantity='quantity',qty='quantity',count='quantity',amount='quantity',
+    itemid='id',uid='id',uuid='id',id='id',
+    mutation='mutation',variant='mutation',rarity='rarity',
+    weight='weight',weightkg='weight',name='name',
+}
+local function normalized(k)
+    if type(k)~='string' then return '' end
+    if #k > 48 then return '' end
+    return k:lower():gsub('[^%w]','')
 end
-local function domain(url)
-    if type(url) ~= 'string' then return '(unknown host)' end
-    local h = url:match('^%a[%w+.-]*://([^/?#]+)')
-    if not h then return '(local/non-URL)' end
-    h = h:match('@(.+)$') or h -- discard user:pass@host if supplied
-    return tidy((h:lower():gsub(':%d+$', '')), 70)
-end
-local function age()
-    return math.max(0, math.floor(os.clock() - clockStart))
-end
-local function record(kind, key)
-    if not state.active then return end
-    key = tidy(key, 165)
-    state.monitored = state.monitored + 1
-    local id = kind .. '|' .. key
-    local g = state.groups[id]
-    if not g then
-        if #state.groupKeys >= 100 then state.dropped = state.dropped + 1; return end
-        g = {type=kind, name=key, count=0, first=age(), last=age(), after=0}
-        state.groups[id] = g
-        table.insert(state.groupKeys, id)
+local function isArray(t)
+    if type(t)~='table' then return false,0 end
+    local n=0
+    for k in pairs(t) do
+        if type(k)=='number' and k>=1 and k%1==0 then n=n+1
+        else return false,0 end
+        if n>20000 then break end
     end
-    g.count = g.count + 1
-    g.last = age()
-    if state.marker and os.clock() >= state.marker then g.after = g.after + 1 end
-    if #state.events < 160 then
-        if g.count <= 2 or g.count == 5 or g.count == 20 then
-            table.insert(state.events, string.format('[%03ds] %s %s', age(), kind, key))
+    return n>0,n
+end
+local function describeBody(body)
+    local result={
+        bytes=type(body)=='string' and #body or -1, fmt='missing',
+        parsed=false, inspected=0, maxDepth=0, maxArray=0, arrays=0,
+        objects=0, scalarTypes={string=0,number=0,boolean=0,other=0},
+        categories={}, fields={}, truncated=false, root='unknown'
+    }
+    if type(body)~='string' then return result end
+    local prefix=body:match('^%s*(.)') or ''
+    if prefix=='{' or prefix=='[' then result.fmt='json-like'
+    elseif body:find('=',1,true) then result.fmt='form-or-encoded'
+    else result.fmt='other' end
+    -- Deliberate size cap: avoid freezing Android and avoid retaining raw body.
+    if #body > 450000 then result.fmt=result.fmt..'/too-large'; return result end
+    if prefix~='{' and prefix~='[' then return result end
+    local ok,root=pcall(function() return HttpService:JSONDecode(body) end)
+    if not ok or type(root)~='table' then return result end
+    result.parsed=true
+    local arr=isArray(root)
+    result.root=arr and 'array' or 'object'
+    local stack={{v=root,depth=0}}
+    local seen={}
+    local nodeBudget=2300
+    local perTable=300
+    while #stack>0 do
+        local entry=table.remove(stack)
+        local value=entry.v
+        local depth=entry.depth
+        if type(value)=='table' and not seen[value] then
+            seen[value]=true
+            result.inspected=result.inspected+1
+            if result.inspected>=nodeBudget then result.truncated=true; break end
+            if depth>result.maxDepth then result.maxDepth=depth end
+            local array,len=isArray(value)
+            if array then
+                result.arrays=result.arrays+1
+                if len>result.maxArray then result.maxArray=len end
+            else result.objects=result.objects+1 end
+            local current=0
+            for k,v in pairs(value) do
+                current=current+1
+                if current>perTable then result.truncated=true; break end
+                local norm=normalized(k)
+                local kind=KINDS[norm]
+                if kind then
+                    local meta=result.categories[kind]
+                    if not meta then meta={hits=0,maxEntries=0,type='unknown'}; result.categories[kind]=meta end
+                    meta.hits=meta.hits+1
+                    if type(v)=='table' then
+                        local count=0
+                        for _ in pairs(v) do
+                            count=count+1
+                            if count>10000 then break end
+                        end
+                        if count>meta.maxEntries then meta.maxEntries=count end
+                        meta.type='table'
+                    else
+                        meta.type=type(v)
+                    end
+                end
+                local sf=SHAPE[norm]
+                if sf then result.fields[sf]=(result.fields[sf] or 0)+1 end
+                if type(v)=='table' then
+                    if depth < 9 then stack[#stack+1]={v=v,depth=depth+1}
+                    else result.truncated=true end
+                else
+                    local vt=type(v)
+                    if result.scalarTypes[vt] then result.scalarTypes[vt]=result.scalarTypes[vt]+1
+                    else result.scalarTypes.other=result.scalarTypes.other+1 end
+                end
+            end
         end
-    else
-        state.dropped = state.dropped + 1
     end
+    return result
 end
-
-local function safeInstanceName(self)
-    if typeof(self) ~= 'Instance' then return '(non-Instance)' end
-    local name = tidy(self.Name, 56)
-    local ok, path = pcall(function() return self:GetFullName() end)
-    if ok and type(path) == 'string' then
-        local suffix = path:match('ReplicatedStorage[%.%/](.+)')
-        if suffix then return 'RS/' .. tidy(suffix, 125) end
-        local suffix2 = path:match('ReplicatedFirst[%.%/](.+)')
-        if suffix2 then return 'RF/' .. tidy(suffix2, 125) end
+local function rowFromBody(body, source)
+    local shape
+    local ok,res=pcall(describeBody,body)
+    if ok then shape=res else
+        S.exceptions=S.exceptions+1
+        shape={bytes=type(body)=='string' and #body or -1,fmt='inspect-error',parsed=false}
     end
-    return name
+    return {at=sec(),after=(S.marker~=nil and os.clock()>=S.marker),source=source,shape=shape}
 end
-
-local function moduleSnapshot()
-    local result = {}
-    if type(getloadedmodules) ~= 'function' then return result, 0, false end
-    local ok, modules = pcall(getloadedmodules)
-    if not ok or type(modules) ~= 'table' then return result, 0, false end
-    local n = 0
-    for _, v in pairs(modules) do
-        if typeof(v) == 'Instance' and v:IsA('ModuleScript') then
-            local ok2, full = pcall(function() return v:GetFullName() end)
-            if ok2 and type(full) == 'string' then result[full] = true; n = n + 1 end
-        end
+local hooked={}
+local wrap = type(newcclosure)=='function' and newcclosure or function(f) return f end
+local function hookExecutor(fn,tag)
+    if type(fn)~='function' or type(hookfunction)~='function' then
+        S.hooks[#S.hooks+1]=tag..': unavailable'
+        return
     end
-    return result, n, true
+    if hooked[fn] then return end
+    hooked[fn]=true
+    local original
+    local ok=pcall(function()
+        original=hookfunction(fn,wrap(function(options,...)
+            if S.active and type(options)=='table' then
+                -- No path/query/body/headers retained; only check destination host.
+                local host=getHost(options.Url or options.URL or options.url)
+                if host=='stats.zetsu.lol' and methodOf(options)=='POST' then
+                    local ok2,row=pcall(function()
+                        local body=options.Body or options.body
+                        return rowFromBody(body,tag)
+                    end)
+                    if ok2 and row then pushPost(row) else S.exceptions=S.exceptions+1 end
+                end
+            end
+            return original(options,...)
+        end))
+    end)
+    S.hooks[#S.hooks+1]=tag..': '..(ok and 'OK' or 'unavailable')
 end
+local function field(t,k)
+    if type(t)~='table' then return nil end
+    local ok,x=pcall(function() return t[k] end)
+    return ok and x or nil
+end
+hookExecutor(field(env,'request'),'request')
+hookExecutor(field(env,'http_request'),'http_request')
+hookExecutor(field(field(env,'http'),'request'),'http.request')
+hookExecutor(field(field(env,'syn'),'request'),'syn.request')
+hookExecutor(field(field(env,'fluxus'),'request'),'fluxus.request')
+hookExecutor(field(_G,'request'),'_G.request')
 
-state.firstModules, state.baseModules, state.modulesAvailable = moduleSnapshot()
-
--- GUI: compact panel with metadata-only report, draggable on Android.
-local old = pg:FindFirstChild('KIMSZetsuMonitorV1')
-if old then old:Destroy() end
-local screen = Instance.new('ScreenGui')
-screen.Name = 'KIMSZetsuMonitorV1'
-screen.ResetOnSpawn = false
-screen.DisplayOrder = 9999
-screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screen.Parent = pg
-
-local panel = Instance.new('Frame')
-panel.Name = 'Panel'
-panel.Size = UDim2.new(.92, 0, .53, 0)
-panel.Position = UDim2.new(.04, 0, .23, 0)
-panel.BackgroundColor3 = Color3.fromRGB(13, 18, 33)
-panel.BorderSizePixel = 0
-panel.Active = true
-panel.Draggable = true
-panel.Parent = screen
-Instance.new('UICorner', panel).CornerRadius = UDim.new(0, 10)
-local stroke = Instance.new('UIStroke', panel)
-stroke.Color = Color3.fromRGB(121, 89, 224)
-stroke.Thickness = 2
-local title = Instance.new('TextLabel', panel)
-title.BackgroundTransparency = 1
-title.Position = UDim2.new(.025, 0, 0, 7)
-title.Size = UDim2.new(.95, 0, 0, 26)
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Text = 'KIMS ZETSU MONITOR | METADATA ONLY'
-title.Font = Enum.Font.GothamBold
-title.TextSize = 14
-title.TextColor3 = Color3.fromRGB(196, 184, 255)
-local function button(label, x, width)
-    local b = Instance.new('TextButton', panel)
-    b.Size = UDim2.new(width, 0, 0, 32)
-    b.Position = UDim2.new(x, 0, 0, 40)
-    b.Text = label
-    b.TextScaled = true
-    b.Font = Enum.Font.GothamBold
-    b.TextColor3 = Color3.new(1, 1, 1)
-    b.BackgroundColor3 = Color3.fromRGB(72, 56, 139)
-    Instance.new('UICorner', b).CornerRadius = UDim.new(0, 6)
+-- Small mobile-friendly, movable GUI. Does not hook game remotes or require modules.
+local previous=pg:FindFirstChild('KIMSZetsuMonitorV2')
+if previous then previous:Destroy() end
+local gui=Instance.new('ScreenGui')
+gui.Name='KIMSZetsuMonitorV2'; gui.ResetOnSpawn=false; gui.DisplayOrder=9999
+gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; gui.Parent=pg
+local frame=Instance.new('Frame')
+frame.Size=UDim2.new(.92,0,.56,0)
+frame.Position=UDim2.new(.04,0,.20,0)
+frame.BackgroundColor3=Color3.fromRGB(12,19,35)
+frame.BorderSizePixel=0; frame.Active=true; frame.Draggable=true; frame.Parent=gui
+Instance.new('UICorner',frame).CornerRadius=UDim.new(0,12)
+local stroke=Instance.new('UIStroke',frame); stroke.Color=Color3.fromRGB(108,93,223); stroke.Thickness=2
+local title=Instance.new('TextLabel',frame)
+title.BackgroundTransparency=1; title.Size=UDim2.new(.96,0,0,30)
+title.Position=UDim2.new(.02,0,0,5); title.Text='KIMS ZETSU V2 | POST SHAPE ONLY'
+title.Font=Enum.Font.GothamBold; title.TextSize=13
+title.TextColor3=Color3.fromRGB(191,181,255); title.TextXAlignment=Enum.TextXAlignment.Left
+local function makeButton(label,x,w)
+    local b=Instance.new('TextButton',frame)
+    b.Text=label; b.Font=Enum.Font.GothamBold; b.TextScaled=true
+    b.TextColor3=Color3.new(1,1,1); b.BackgroundColor3=Color3.fromRGB(70,55,135)
+    b.Position=UDim2.new(x,0,0,39); b.Size=UDim2.new(w,0,0,32)
+    Instance.new('UICorner',b).CornerRadius=UDim.new(0,7)
     return b
 end
-local markBtn = button('TANDA ZETSU', .025, .26)
-local stopBtn = button('STOP', .300, .17)
-local copyBtn = button('SALIN', .485, .17)
-local miniBtn = button('MINI', .670, .14)
-local exitBtn = button('X', .826, .135)
-local status = Instance.new('TextLabel', panel)
-status.Position = UDim2.new(.025, 0, 0, 77)
-status.Size = UDim2.new(.95, 0, 0, 24)
-status.BackgroundTransparency = 1
-status.TextColor3 = Color3.fromRGB(109, 230, 166)
-status.TextXAlignment = Enum.TextXAlignment.Left
-status.Font = Enum.Font.Code
-status.TextSize = 12
-status.Text = 'Memasang monitor...'
-local scroll = Instance.new('ScrollingFrame', panel)
-scroll.Position = UDim2.new(.025, 0, 0, 105)
-scroll.Size = UDim2.new(.95, 0, 1, -113)
-scroll.BackgroundColor3 = Color3.fromRGB(23, 30, 48)
-scroll.BorderSizePixel = 0
-scroll.ScrollBarThickness = 6
-scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-scroll.Parent = panel
-local reportLabel = Instance.new('TextLabel', scroll)
-reportLabel.Position = UDim2.new(0, 6, 0, 5)
-reportLabel.Size = UDim2.new(1, -16, 0, 0)
-reportLabel.AutomaticSize = Enum.AutomaticSize.Y
-reportLabel.BackgroundTransparency = 1
-reportLabel.TextWrapped = true
-reportLabel.TextXAlignment = Enum.TextXAlignment.Left
-reportLabel.TextYAlignment = Enum.TextYAlignment.Top
-reportLabel.Font = Enum.Font.Code
-reportLabel.TextSize = 12
-reportLabel.TextColor3 = Color3.fromRGB(220, 230, 244)
+local mark=makeButton('TANDA',.025,.21)
+local stop=makeButton('STOP',.245,.17)
+local copy=makeButton('SALIN',.425,.17)
+local mini=makeButton('MINI',.605,.17)
+local closeBtn=makeButton('X',.79,.16)
+local info=Instance.new('TextLabel',frame)
+info.BackgroundTransparency=1; info.Size=UDim2.new(.95,0,0,24)
+info.Position=UDim2.new(.025,0,0,79); info.TextXAlignment=Enum.TextXAlignment.Left
+info.Font=Enum.Font.Code; info.TextSize=12; info.TextColor3=Color3.fromRGB(105,224,164)
+local scroll=Instance.new('ScrollingFrame',frame)
+scroll.Position=UDim2.new(.025,0,0,110); scroll.Size=UDim2.new(.95,0,1,-119)
+scroll.BackgroundColor3=Color3.fromRGB(21,29,49)
+scroll.BorderSizePixel=0; scroll.ScrollBarThickness=6
+scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; scroll.Parent=frame
+local lbl=Instance.new('TextLabel',scroll)
+lbl.Position=UDim2.new(0,6,0,5); lbl.Size=UDim2.new(1,-16,0,0)
+lbl.AutomaticSize=Enum.AutomaticSize.Y; lbl.BackgroundTransparency=1
+lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.TextYAlignment=Enum.TextYAlignment.Top
+lbl.TextWrapped=true; lbl.Font=Enum.Font.Code; lbl.TextSize=12
+lbl.TextColor3=Color3.fromRGB(228,232,247)
 
-local createClosure = type(newcclosure) == 'function' and newcclosure or function(f) return f end
-local namecallHooked = false
-if type(hookmetamethod) == 'function' and type(getnamecallmethod) == 'function' then
-    local previous
-    local ok = pcall(function()
-        previous = hookmetamethod(game, '__namecall', createClosure(function(self, ...)
-            if state.active then
-                local method = getnamecallmethod()
-                if method == 'FireServer' or method == 'InvokeServer' then
-                    if typeof(self) == 'Instance' then
-                        local cls = self.ClassName
-                        if cls == 'RemoteEvent' or cls == 'RemoteFunction' or cls == 'UnreliableRemoteEvent' then
-                            record('REMOTE', method .. ' ' .. safeInstanceName(self))
-                        end
-                    end
-                elseif method == 'HttpGet' or method == 'HttpGetAsync' or method == 'GetAsync' or method == 'PostAsync' or method == 'RequestAsync' then
-                    local first = select(1, ...)
-                    if type(first) == 'string' then
-                        record('HTTP-ROBLOX', method .. ' ' .. domain(first))
-                    elseif type(first) == 'table' then
-                        record('HTTP-ROBLOX', method .. ' ' .. domain(first.Url or first.URL))
-                    end
-                end
-            end
-            return previous(self, ...)
-        end))
-    end)
-    namecallHooked = ok
-end
-state.hooks[#state.hooks + 1] = 'Namecall Roblox: ' .. (namecallHooked and 'OK' or 'unavailable')
-
-local hookedFunctions = {}
-local function hookRequest(fn, tag)
-    if type(fn) ~= 'function' or type(hookfunction) ~= 'function' then return end
-    if hookedFunctions[fn] then return end
-    hookedFunctions[fn] = true
-    local original
-    local ok = pcall(function()
-        original = hookfunction(fn, createClosure(function(options, ...)
-            if state.active then
-                local url, method
-                if type(options) == 'table' then
-                    url = options.Url or options.URL or options.url
-                    method = options.Method or options.method or 'GET'
-                elseif type(options) == 'string' then
-                    url, method = options, 'GET'
-                end
-                record('HTTP-EXEC', tostring(method):upper():sub(1, 8) .. ' ' .. domain(url))
-            end
-            return original(options, ...)
-        end))
-    end)
-    if ok then state.hooks[#state.hooks + 1] = tag .. ': OK'
-    else state.hooks[#state.hooks + 1] = tag .. ': unavailable' end
-end
-local function field(tableObj, key)
-    if type(tableObj) ~= 'table' then return nil end
-    local ok, v = pcall(function() return tableObj[key] end)
-    return ok and v or nil
-end
-hookRequest(field(env, 'request'), 'request')
-hookRequest(field(env, 'http_request'), 'http_request')
-hookRequest(field(env, 'http'), 'http') -- normally a table, ignored
-hookRequest(field(field(env, 'syn'), 'request'), 'syn.request')
-hookRequest(field(field(env, 'http'), 'request'), 'http.request')
-hookRequest(field(env, 'fluxus') and field(field(env, 'fluxus'), 'request'), 'fluxus.request')
-hookRequest(field(_G, 'request'), '_G.request')
-
-local function updateModuleReport()
-    local out = {}
-    local now, currentCount, available = moduleSnapshot()
-    out[#out + 1] = 'baseline=' .. tostring(state.baseModules) .. ' now=' .. tostring(currentCount) .. ' available=' .. tostring(available)
-    if available then
-        local total, shown = 0, 0
-        for name in pairs(now) do
-            if not state.firstModules[name] then
-                total = total + 1
-                if shown < 25 then
-                    out[#out + 1] = 'NEW MODULE ' .. tidy(name, 145)
-                    shown = shown + 1
-                end
-            end
+local ORDER={'Fish','Rods','Baits','Items','Gear','Pets','Stones','Charms','Emotes','Abilities','Potions','Boats','Lanterns','Halos'}
+local FIELDS={'inventory','data','collection','quantity','id','mutation','rarity','weight','name'}
+local function fmtShape(s)
+    if not s then return 'NO BODY SUMMARY' end
+    local a={'bytes='..tostring(s.bytes)..' | format='..tostring(s.fmt)..' | parsed='..tostring(s.parsed)}
+    if s.parsed then
+        a[#a+1]='root='..tostring(s.root)..' | objects='..tostring(s.objects)..' | arrays='..tostring(s.arrays)..' | largestArray='..tostring(s.maxArray)
+        a[#a+1]='nodes='..tostring(s.inspected)..' | maxDepth='..tostring(s.maxDepth)..' | truncated='..tostring(s.truncated)
+        local scal=s.scalarTypes
+        a[#a+1]='scalar values: string='..tostring(scal.string)..' number='..tostring(scal.number)..' bool='..tostring(scal.boolean)
+        local categories={}
+        for _,k in ipairs(ORDER) do
+            local c=s.categories[k]
+            if c then categories[#categories+1]=k..'(seen='..c.hits..',entries<='..c.maxEntries..',type='..c.type..')' end
         end
-        out[#out + 1] = 'New modules=' .. tostring(total)
+        a[#a+1]='CATEGORIES: '..(#categories>0 and table.concat(categories,' ; ') or '(none identified)')
+        local fields={}
+        for _,k in ipairs(FIELDS) do
+            if s.fields[k] then fields[#fields+1]=k..'='..s.fields[k] end
+        end
+        a[#a+1]='SAFE FIELD COUNTS: '..(#fields>0 and table.concat(fields,', ') or '(none identified)')
     end
-    state.moduleReport = out
+    return table.concat(a,'\n  ')
 end
-
 local function report()
-    local lines = {
-        'KIMS ZETSU MONITOR V1 | METADATA ONLY',
-        'PlaceId=' .. tostring(game.PlaceId),
-        'Elapsed=' .. tostring(age()) .. 's | status=' .. (state.active and 'RECORDING' or 'STOPPED'),
-        'ZETSU MARK=' .. (state.marker and tostring(math.floor(state.marker - clockStart)) .. 's' or 'not set'),
-        'No request body, headers, keys, URL query or item payload stored.',
-        '', '=== INSTALLED HOOKS ===',
+    local rows={
+        'KIMS ZETSU MONITOR V2 | SAFE POST STRUCTURE ONLY',
+        'PlaceId='..tostring(game.PlaceId)..' | elapsed='..sec()..'s | '..(S.active and 'RECORDING' or 'STOPPED'),
+        'Marked='..(S.marker and tostring(math.floor(S.marker-started))..'s' or 'NO'),
+        'No raw URLs, credentials, headers, bodies, usernames, item names or values retained.',
+        'Only POST metadata for stats.zetsu.lol is reported.',
+        '', '=== HOOK STATUS ==='
     }
-    for _, s in ipairs(state.hooks) do lines[#lines + 1] = s end
-    lines[#lines + 1] = ''
-    lines[#lines + 1] = '=== NETWORK / REMOTE SUMMARY ==='
-    lines[#lines + 1] = 'Unique events=' .. tostring(#state.groupKeys) .. ' | seen=' .. tostring(state.monitored) .. ' | truncated=' .. tostring(state.dropped)
-    for _, id in ipairs(state.groupKeys) do
-        local g = state.groups[id]
-        if g then
-            lines[#lines + 1] = g.type .. ' x' .. tostring(g.count) .. ' afterMark=' .. tostring(g.after) .. ' @' .. tostring(g.first) .. 's ' .. g.name
-        end
+    for _,x in ipairs(S.hooks) do rows[#rows+1]=x end
+    rows[#rows+1]=''
+    rows[#rows+1]='=== POST METADATA ==='
+    rows[#rows+1]='Observed='..S.attempts..' | displayed='..#S.posts..' | dropped='..S.dropped..' | parser errors='..S.exceptions
+    for i,row in ipairs(S.posts) do
+        rows[#rows+1]=''
+        rows[#rows+1]='POST '..i..' @'..row.at..'s | afterMark='..tostring(row.after)..' | via='..row.source
+        rows[#rows+1]='  '..fmtShape(row.shape)
     end
-    lines[#lines + 1] = ''
-    lines[#lines + 1] = '=== MODULES LOADED AFTER MONITOR START ==='
-    for _, line in ipairs(state.moduleReport or {'Snapshot calculated on STOP or SALIN.'}) do
-        lines[#lines + 1] = line
-    end
-    lines[#lines + 1] = ''
-    lines[#lines + 1] = '=== SAMPLED TIMELINE ==='
-    for _, e in ipairs(state.events) do lines[#lines + 1] = e end
-    lines[#lines + 1] = ''
-    lines[#lines + 1] = 'Interpretation: Remotes may be normal game traffic; host alone does not prove where inventory was read.'
-    lines[#lines + 1] = 'Direct local module/cache reads and native executor traffic can escape these hooks.'
-    return table.concat(lines, '\n')
+    rows[#rows+1]=''
+    rows[#rows+1]='=== LIMITATIONS ==='
+    rows[#rows+1]='Only observed executor-level POST calls; native/hidden requests may not be seen.'
+    rows[#rows+1]='A detected inventory-shaped request does not prove how Zetsu read client data.'
+    rows[#rows+1]='No copied API credentials or raw request payload. No automatic uploads.'
+    return table.concat(rows,'\n')
 end
-
-markBtn.MouseButton1Click:Connect(function()
-    if not state.marker then
-        state.marker = os.clock()
-        record('MARK', 'User is about to execute Zetsu')
-        markBtn.Text = 'DITANDAI'
-    end
+mark.MouseButton1Click:Connect(function()
+    if not S.marker then S.marker=os.clock(); mark.Text='DITANDAI' end
 end)
-stopBtn.MouseButton1Click:Connect(function()
-    state.active = false
-    state.stopped = true
-    stopBtn.Text = 'STOPPED'
-    updateModuleReport()
-    status.Text = 'STOPPED | tekan SALIN'
-    reportLabel.Text = report()
+stop.MouseButton1Click:Connect(function()
+    S.active=false; S.stopped=true; stop.Text='STOPPED'; lbl.Text=report()
+    info.Text='STOPPED | tekan SALIN'
 end)
-copyBtn.MouseButton1Click:Connect(function()
-    if not state.moduleReport then updateModuleReport() end
-    local txt = report()
-    if type(setclipboard) == 'function' then
-        local ok = pcall(setclipboard, txt)
-        status.Text = ok and 'Laporan metadata tersalin.' or 'Clipboard gagal; lihat panel.'
-    else
-        status.Text = 'Delta tidak menyediakan setclipboard.'
-    end
-    reportLabel.Text = txt
+copy.MouseButton1Click:Connect(function()
+    local txt=report()
+    lbl.Text=txt
+    if type(setclipboard)=='function' then
+        local ok=pcall(setclipboard,txt)
+        info.Text=ok and 'Laporan aman tersalin.' or 'Salin gagal, baca panel.'
+    else info.Text='setclipboard tidak tersedia di Delta.' end
 end)
-local mini = false
-miniBtn.MouseButton1Click:Connect(function()
-    mini = not mini
-    if mini then
-        panel.Size = UDim2.new(.92, 0, 0, 110)
-        scroll.Visible = false
-        miniBtn.Text = 'BUKA'
-    else
-        panel.Size = UDim2.new(.92, 0, .53, 0)
-        scroll.Visible = true
-        miniBtn.Text = 'MINI'
-    end
+local collapsed=false
+mini.MouseButton1Click:Connect(function()
+    collapsed=not collapsed
+    frame.Size=collapsed and UDim2.new(.92,0,0,110) or UDim2.new(.92,0,.56,0)
+    scroll.Visible=not collapsed
+    mini.Text=collapsed and 'BUKA' or 'MINI'
 end)
 local function close()
-    state.active = false
-    state.stopped = true
-    if screen.Parent then screen:Destroy() end
+    S.active=false; S.stopped=true
+    if gui.Parent then gui:Destroy() end
 end
-state.close = close
-exitBtn.MouseButton1Click:Connect(close)
-
-record('STATUS', 'Monitor ready (run before Zetsu loader)')
+S.close=close
+closeBtn.MouseButton1Click:Connect(close)
+S.hooks[#S.hooks+1]='Method: only executor request hooks (no game remote hooking)'
+lbl.Text=report()
 task.spawn(function()
-    while screen.Parent and not state.stopped do
-        local e = #state.groupKeys
-        status.Text = (state.active and 'REC ON | ' or 'OFF | ') .. 'unique=' .. tostring(e) ..
-            ' | hits=' .. tostring(state.monitored) ..
-            (state.marker and ' | ZETSU MARKED' or ' | press TANDA ZETSU')
-        reportLabel.Text = report()
-        task.wait(1.5)
+    while gui.Parent and not S.stopped do
+        info.Text='REC ON | POST='..tostring(S.attempts)..(S.marker and ' | ZETSU MARKED' or ' | tekan TANDA')
+        lbl.Text=report()
+        task.wait(1.8)
     end
 end)
