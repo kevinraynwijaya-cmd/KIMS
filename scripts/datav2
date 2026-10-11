@@ -1,336 +1,411 @@
--- KIMS TECH | ZETSU POST SHAPE MONITOR V2
--- Diagnostic only, intended for observing YOUR OWN normal Zetsu session.
--- Records ONLY safe structural aggregates for POST requests to stats.zetsu.lol.
--- NEVER logs URLs, query strings, headers, API keys, usernames, values, or request body.
--- Nothing is uploaded. Does NOT change inventory or game remotes.
--- Run FIRST in a fresh Roblox/Delta session, then use your own regular Zetsu loader.
+-- KIMS TECH | PLAYERDATA SOURCE TRACER V16
+-- Fish It / Delta Android | local metadata inspection only.
+-- Does NOT run Zetsu, monitor HTTP, upload data, fire remotes, invoke game getters,
+-- dump inventory contents, read credentials, or change inventory.
+-- Requires ONLY module paths returned by getloadedmodules; cached require is normally
+-- side-effect-free but this cannot be guaranteed across all executor/game environments.
+-- Goal: find the module/function/table *paths* that may lead to player-owned data.
 
 local Players = game:GetService('Players')
-local HttpService = game:GetService('HttpService')
-local plr = Players.LocalPlayer
-if not plr then return end
-local pg = plr:WaitForChild('PlayerGui')
-local env = (type(getgenv) == 'function' and getgenv()) or _G
-local key = 'KIMS_ZETSU_SHAPE_MONITOR_V2'
-if type(env[key]) == 'table' then
-    local prev = env[key]
-    prev.active = false
-    if type(prev.close) == 'function' then pcall(prev.close) end
+local UserInputService = game:GetService('UserInputService')
+local player = Players.LocalPlayer
+if not player then return end
+local pg = player:WaitForChild('PlayerGui')
+local old = pg:FindFirstChild('KIMSPlayerDataTracerV16')
+if old then old:Destroy() end
+local screen = Instance.new('ScreenGui')
+screen.Name = 'KIMSPlayerDataTracerV16'
+screen.ResetOnSpawn = false
+screen.DisplayOrder = 999
+screen.Parent = pg
+
+local panel = Instance.new('Frame')
+panel.Size = UDim2.new(.94,0,.68,0)
+panel.Position = UDim2.new(.03,0,.16,0)
+panel.Active = true
+panel.BackgroundColor3 = Color3.fromRGB(13,20,37)
+panel.BorderSizePixel = 0
+panel.Parent = screen
+Instance.new('UICorner',panel).CornerRadius = UDim.new(0,10)
+local stroke = Instance.new('UIStroke',panel)
+stroke.Color = Color3.fromRGB(116,91,229)
+stroke.Thickness = 2
+local title = Instance.new('TextLabel',panel)
+title.Size = UDim2.new(.96,0,0,30)
+title.Position = UDim2.new(.02,0,0,6)
+title.BackgroundTransparency = 1
+title.TextColor3 = Color3.fromRGB(214,203,255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 15
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Text = 'KIMS V16 | PLAYERDATA TRACE'
+local function button(name,x,w)
+ local b=Instance.new('TextButton',panel)
+ b.Position=UDim2.new(x,0,0,43)
+ b.Size=UDim2.new(w,0,0,35)
+ b.Text=name; b.TextScaled=true; b.Font=Enum.Font.GothamBold
+ b.TextColor3=Color3.new(1,1,1)
+ b.BackgroundColor3=Color3.fromRGB(66,56,124)
+ Instance.new('UICorner',b).CornerRadius=UDim.new(0,6)
+ return b
+end
+local copyBtn=button('SALIN',.03,.27)
+local miniBtn=button('MINI',.36,.27)
+local closeBtn=button('TUTUP',.69,.27)
+local status=Instance.new('TextLabel',panel)
+status.Position=UDim2.new(.03,0,0,86)
+status.Size=UDim2.new(.94,0,0,19)
+status.BackgroundTransparency=1
+status.TextColor3=Color3.fromRGB(109,226,170)
+status.Font=Enum.Font.Code
+status.TextSize=12
+status.TextXAlignment=Enum.TextXAlignment.Left
+status.Text='Otomatis memeriksa petunjuk sumber PlayerData...'
+local sc=Instance.new('ScrollingFrame',panel)
+sc.Position=UDim2.new(.025,0,0,112)
+sc.Size=UDim2.new(.95,0,1,-121)
+sc.BackgroundColor3=Color3.fromRGB(20,28,48)
+sc.BorderSizePixel=0
+sc.ScrollBarThickness=5
+sc.AutomaticCanvasSize=Enum.AutomaticSize.Y
+local out=Instance.new('TextLabel',sc)
+out.Position=UDim2.new(0,7,0,6)
+out.Size=UDim2.new(1,-19,0,0)
+out.AutomaticSize=Enum.AutomaticSize.Y
+out.BackgroundTransparency=1
+out.TextWrapped=true
+out.TextXAlignment=Enum.TextXAlignment.Left
+out.TextYAlignment=Enum.TextYAlignment.Top
+out.TextColor3=Color3.fromRGB(225,234,250)
+out.Font=Enum.Font.Code
+out.TextSize=12
+
+local cancelled=false
+local busy=true
+local lines={}
+local function say(s)
+ if #lines<260 then lines[#lines+1]=tostring(s) end
+end
+local function refresh()
+ if screen.Parent then out.Text=table.concat(lines,'\n') end
+end
+local function clean(s,max)
+ return tostring(s or ''):gsub('[\r\n\t]',' '):sub(1,max or 115)
+end
+local function safePath(obj)
+ local ok,res=pcall(function() return obj:GetFullName() end)
+ return ok and clean(res,145) or '(path unavailable)'
+end
+local function low(k)
+ return type(k)=='string' and string.lower(k) or ''
 end
 
-local started = os.clock()
-local S = {
-    active=true, stopped=false, marker=nil, attempts=0, hooks={}, posts={},
-    dropped=0, diagnostics={}, exceptions=0, close=nil,
+-- Module ranking is STRICT. No arbitrary 'data' substring hits or unrelated GUI modules.
+local exactRanks={
+ ['ReplicatedStorage.Controllers.InventoryController']=97,
+ ['ReplicatedStorage.Controllers.InventoryController.InventoryPagination']=80,
+ ['ReplicatedStorage.Shared.InventoryMapping']=65,
+ ['ReplicatedStorage.Controllers.InteractionController.Internal.InventoryUtility']=70,
+ ['ReplicatedFirst.GAME.Runner.WaitForPlayerData']=100
 }
-env[key] = S
-local function sec() return math.max(0, math.floor(os.clock()-started)) end
-local function pushPost(row)
-    if not S.active then return end
-    S.attempts=S.attempts+1
-    if #S.posts < 18 then table.insert(S.posts,row) else S.dropped=S.dropped+1 end
-end
-local function methodOf(o)
-    if type(o) ~= 'table' then return 'GET' end
-    local m=o.Method or o.method or 'GET'
-    return type(m)=='string' and m:upper() or 'GET'
-end
-local function getHost(url)
-    if type(url)~='string' then return nil end
-    local raw=url:match('^%a[%w+.-]*://([^/?#]+)')
-    if not raw then return nil end
-    -- Compare only hostname; never print full URLs, paths, queries or credentials.
-    raw=raw:match('@(.+)$') or raw
-    raw=raw:gsub(':%d+$',''):lower()
-    return raw
+local function moduleRank(p)
+ if exactRanks[p] then return exactRanks[p] end
+ local s=string.lower(p)
+ if s:find('tilerender',1,true) or s:find('particles',1,true) or s:find('.items.',1,true) then return 0 end
+ if s:find('playerdata',1,true) or s:find('clientdata',1,true) then return 94 end
+ if s:find('datacontroller',1,true) or s:find('profilecontroller',1,true) then return 91 end
+ if s:find('replicacontroller',1,true) or s:find('replica.',1,true) or s:find('replion',1,true) then return 89 end
+ if s:find('profilemanager',1,true) or s:find('datamanager',1,true) then return 86 end
+ if s:find('replicationcontroller',1,true) or s:find('statesync',1,true) then return 84 end
+ if s:find('inventorystate',1,true) or s:find('inventorydata',1,true) then return 83 end
+ if s:find('playerstate',1,true) or s:find('userstate',1,true) then return 82 end
+ if s:find('inventorycontroller.inventoryfilter',1,true) then return 45 end
+ return 0
 end
 
--- Static safe field allowlist. We never print names of unknown/private keys.
-local KINDS={
-    fish='Fish',fishes='Fish',fishingrods='Rods',rods='Rods',rod='Rods',
-    baits='Baits',bait='Baits',pets='Pets',pet='Pets',
-    items='Items',item='Items',gears='Gear',gear='Gear',
-    enchantstones='Stones',stones='Stones',stone='Stones',
-    charms='Charms',emotes='Emotes',abilities='Abilities',
-    potions='Potions',boats='Boats',lanterns='Lanterns',halos='Halos',
+local functionsOfInterest={
+ get=true,getdata=true,getplayerdata=true,waitforplayerdata=true,
+ getinventory=true,getitems=true,getstate=true,getprofile=true,
+ getreplica=true,getreplion=true,observe=true,subscribe=true,
+ getitem=true,getplayerprofile=true,getsave=true,getcacheddata=true,
+ getitemdata=true,ondatachanged=true,inventorychanged=true
 }
-local SHAPE={
-    inventory='inventory',inventories='inventory',data='data',
-    collections='collection',collection='collection',
-    quantity='quantity',qty='quantity',count='quantity',amount='quantity',
-    itemid='id',uid='id',uuid='id',id='id',
-    mutation='mutation',variant='mutation',rarity='rarity',
-    weight='weight',weightkg='weight',name='name',
+local collectionKeys={
+ fish=true,fishes=true,inventory=true,inventories=true,items=true,
+ rods=true,['fishing rods']=true,pets=true,baits=true,gears=true,
+ potions=true,['enchant stones']=true,emotes=true,halos=true,
+ lanterns=true,charms=true,boats=true
 }
-local function normalized(k)
-    if type(k)~='string' then return '' end
-    if #k > 48 then return '' end
-    return k:lower():gsub('[^%w]','')
+local stateKeys={
+ data=true,playerdata=true,playerstate=true,profile=true,replica=true,
+ replion=true,state=true,inventorydata=true,inventory=true,
+ profiledata=true,savedata=true,save=true,owneditems=true,
+ itemdata=true,items=true,collection=true,inventoryitems=true
+}
+local function showKey(k)
+ local l=low(k)
+ if stateKeys[l] or collectionKeys[l] or functionsOfInterest[l] then return clean(k,34) end
+ return '[entry]'
 end
-local function isArray(t)
-    if type(t)~='table' then return false,0 end
-    local n=0
-    for k in pairs(t) do
-        if type(k)=='number' and k>=1 and k%1==0 then n=n+1
-        else return false,0 end
-        if n>20000 then break end
-    end
-    return n>0,n
-end
-local function describeBody(body)
-    local result={
-        bytes=type(body)=='string' and #body or -1, fmt='missing',
-        parsed=false, inspected=0, maxDepth=0, maxArray=0, arrays=0,
-        objects=0, scalarTypes={string=0,number=0,boolean=0,other=0},
-        categories={}, fields={}, truncated=false, root='unknown'
-    }
-    if type(body)~='string' then return result end
-    local prefix=body:match('^%s*(.)') or ''
-    if prefix=='{' or prefix=='[' then result.fmt='json-like'
-    elseif body:find('=',1,true) then result.fmt='form-or-encoded'
-    else result.fmt='other' end
-    -- Deliberate size cap: avoid freezing Android and avoid retaining raw body.
-    if #body > 450000 then result.fmt=result.fmt..'/too-large'; return result end
-    if prefix~='{' and prefix~='[' then return result end
-    local ok,root=pcall(function() return HttpService:JSONDecode(body) end)
-    if not ok or type(root)~='table' then return result end
-    result.parsed=true
-    local arr=isArray(root)
-    result.root=arr and 'array' or 'object'
-    local stack={{v=root,depth=0}}
-    local seen={}
-    local nodeBudget=2300
-    local perTable=300
-    while #stack>0 do
-        local entry=table.remove(stack)
-        local value=entry.v
-        local depth=entry.depth
-        if type(value)=='table' and not seen[value] then
-            seen[value]=true
-            result.inspected=result.inspected+1
-            if result.inspected>=nodeBudget then result.truncated=true; break end
-            if depth>result.maxDepth then result.maxDepth=depth end
-            local array,len=isArray(value)
-            if array then
-                result.arrays=result.arrays+1
-                if len>result.maxArray then result.maxArray=len end
-            else result.objects=result.objects+1 end
-            local current=0
-            for k,v in pairs(value) do
-                current=current+1
-                if current>perTable then result.truncated=true; break end
-                local norm=normalized(k)
-                local kind=KINDS[norm]
-                if kind then
-                    local meta=result.categories[kind]
-                    if not meta then meta={hits=0,maxEntries=0,type='unknown'}; result.categories[kind]=meta end
-                    meta.hits=meta.hits+1
-                    if type(v)=='table' then
-                        local count=0
-                        for _ in pairs(v) do
-                            count=count+1
-                            if count>10000 then break end
-                        end
-                        if count>meta.maxEntries then meta.maxEntries=count end
-                        meta.type='table'
-                    else
-                        meta.type=type(v)
-                    end
-                end
-                local sf=SHAPE[norm]
-                if sf then result.fields[sf]=(result.fields[sf] or 0)+1 end
-                if type(v)=='table' then
-                    if depth < 9 then stack[#stack+1]={v=v,depth=depth+1}
-                    else result.truncated=true end
-                else
-                    local vt=type(v)
-                    if result.scalarTypes[vt] then result.scalarTypes[vt]=result.scalarTypes[vt]+1
-                    else result.scalarTypes.other=result.scalarTypes.other+1 end
-                end
-            end
-        end
-    end
-    return result
-end
-local function rowFromBody(body, source)
-    local shape
-    local ok,res=pcall(describeBody,body)
-    if ok then shape=res else
-        S.exceptions=S.exceptions+1
-        shape={bytes=type(body)=='string' and #body or -1,fmt='inspect-error',parsed=false}
-    end
-    return {at=sec(),after=(S.marker~=nil and os.clock()>=S.marker),source=source,shape=shape}
-end
-local hooked={}
-local wrap = type(newcclosure)=='function' and newcclosure or function(f) return f end
-local function hookExecutor(fn,tag)
-    if type(fn)~='function' or type(hookfunction)~='function' then
-        S.hooks[#S.hooks+1]=tag..': unavailable'
-        return
-    end
-    if hooked[fn] then return end
-    hooked[fn]=true
-    local original
-    local ok=pcall(function()
-        original=hookfunction(fn,wrap(function(options,...)
-            if S.active and type(options)=='table' then
-                -- No path/query/body/headers retained; only check destination host.
-                local host=getHost(options.Url or options.URL or options.url)
-                if host=='stats.zetsu.lol' and methodOf(options)=='POST' then
-                    local ok2,row=pcall(function()
-                        local body=options.Body or options.body
-                        return rowFromBody(body,tag)
-                    end)
-                    if ok2 and row then pushPost(row) else S.exceptions=S.exceptions+1 end
-                end
-            end
-            return original(options,...)
-        end))
-    end)
-    S.hooks[#S.hooks+1]=tag..': '..(ok and 'OK' or 'unavailable')
-end
-local function field(t,k)
-    if type(t)~='table' then return nil end
-    local ok,x=pcall(function() return t[k] end)
-    return ok and x or nil
-end
-hookExecutor(field(env,'request'),'request')
-hookExecutor(field(env,'http_request'),'http_request')
-hookExecutor(field(field(env,'http'),'request'),'http.request')
-hookExecutor(field(field(env,'syn'),'request'),'syn.request')
-hookExecutor(field(field(env,'fluxus'),'request'),'fluxus.request')
-hookExecutor(field(_G,'request'),'_G.request')
 
--- Small mobile-friendly, movable GUI. Does not hook game remotes or require modules.
-local previous=pg:FindFirstChild('KIMSZetsuMonitorV2')
-if previous then previous:Destroy() end
-local gui=Instance.new('ScreenGui')
-gui.Name='KIMSZetsuMonitorV2'; gui.ResetOnSpawn=false; gui.DisplayOrder=9999
-gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling; gui.Parent=pg
-local frame=Instance.new('Frame')
-frame.Size=UDim2.new(.92,0,.56,0)
-frame.Position=UDim2.new(.04,0,.20,0)
-frame.BackgroundColor3=Color3.fromRGB(12,19,35)
-frame.BorderSizePixel=0; frame.Active=true; frame.Draggable=true; frame.Parent=gui
-Instance.new('UICorner',frame).CornerRadius=UDim.new(0,12)
-local stroke=Instance.new('UIStroke',frame); stroke.Color=Color3.fromRGB(108,93,223); stroke.Thickness=2
-local title=Instance.new('TextLabel',frame)
-title.BackgroundTransparency=1; title.Size=UDim2.new(.96,0,0,30)
-title.Position=UDim2.new(.02,0,0,5); title.Text='KIMS ZETSU V2 | POST SHAPE ONLY'
-title.Font=Enum.Font.GothamBold; title.TextSize=13
-title.TextColor3=Color3.fromRGB(191,181,255); title.TextXAlignment=Enum.TextXAlignment.Left
-local function makeButton(label,x,w)
-    local b=Instance.new('TextButton',frame)
-    b.Text=label; b.Font=Enum.Font.GothamBold; b.TextScaled=true
-    b.TextColor3=Color3.new(1,1,1); b.BackgroundColor3=Color3.fromRGB(70,55,135)
-    b.Position=UDim2.new(x,0,0,39); b.Size=UDim2.new(w,0,0,32)
-    Instance.new('UICorner',b).CornerRadius=UDim.new(0,7)
-    return b
+local MAX_MODULES=20
+local MAX_NODES=2300
+local MAX_FUNCTION_UPVALUES=340
+local MAX_TABLE_KEYS=16000
+local MAX_RESULTS=22
+local MAX_DEPTH=5
+local CPU_SECONDS=19
+local MAX_QUEUE=9500
+local visited=setmetatable({},{__mode='k'})
+local queue={}
+local qi=1
+local examined=0
+local functionCount=0
+local tableKeysChecked=0
+local candidates={}
+local getterNames={}
+local seenHints={}
+local baselineCount=0
+local function enqueue(v,source,p,depth)
+ local t=type(v)
+ if (t=='table' or t=='function') and #queue<MAX_QUEUE and not visited[v] then
+  queue[#queue+1]={v=v,source=source,path=p,depth=depth}
+ end
 end
-local mark=makeButton('TANDA',.025,.21)
-local stop=makeButton('STOP',.245,.17)
-local copy=makeButton('SALIN',.425,.17)
-local mini=makeButton('MINI',.605,.17)
-local closeBtn=makeButton('X',.79,.16)
-local info=Instance.new('TextLabel',frame)
-info.BackgroundTransparency=1; info.Size=UDim2.new(.95,0,0,24)
-info.Position=UDim2.new(.025,0,0,79); info.TextXAlignment=Enum.TextXAlignment.Left
-info.Font=Enum.Font.Code; info.TextSize=12; info.TextColor3=Color3.fromRGB(105,224,164)
-local scroll=Instance.new('ScrollingFrame',frame)
-scroll.Position=UDim2.new(.025,0,0,110); scroll.Size=UDim2.new(.95,0,1,-119)
-scroll.BackgroundColor3=Color3.fromRGB(21,29,49)
-scroll.BorderSizePixel=0; scroll.ScrollBarThickness=6
-scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; scroll.Parent=frame
-local lbl=Instance.new('TextLabel',scroll)
-lbl.Position=UDim2.new(0,6,0,5); lbl.Size=UDim2.new(1,-16,0,0)
-lbl.AutomaticSize=Enum.AutomaticSize.Y; lbl.BackgroundTransparency=1
-lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.TextYAlignment=Enum.TextYAlignment.Top
-lbl.TextWrapped=true; lbl.Font=Enum.Font.Code; lbl.TextSize=12
-lbl.TextColor3=Color3.fromRGB(228,232,247)
+local function upvaluesOf(fn)
+ if type(getupvalues)=='function' then
+  local ok,r=pcall(getupvalues,fn)
+  if ok and type(r)=='table' then return r end
+ end
+ if type(debug)=='table' and type(debug.getupvalues)=='function' then
+  local ok,r=pcall(debug.getupvalues,fn)
+  if ok and type(r)=='table' then return r end
+ end
+ return nil
+end
+local function summarizeCollection(tbl)
+ local n,tableValues,numberValues,stringValues,others=0,0,0,0,0
+ for _,v in pairs(tbl) do
+  n=n+1
+  local t=type(v)
+  if t=='table' then tableValues=tableValues+1
+  elseif t=='number' then numberValues=numberValues+1
+  elseif t=='string' then stringValues=stringValues+1
+  else others=others+1 end
+  if n>=6500 then break end
+ end
+ return n,tableValues,numberValues,stringValues,others,(n>=6500)
+end
+local function traverse(deadline)
+ while qi<=#queue and examined<MAX_NODES and tableKeysChecked<MAX_TABLE_KEYS
+       and not cancelled and os.clock()<deadline do
+  local node=queue[qi]; qi=qi+1
+  local v=node.v
+  if not visited[v] then
+   visited[v]=true
+   examined=examined+1
+   if type(v)=='function' then
+    functionCount=functionCount+1
+    if functionCount<=MAX_FUNCTION_UPVALUES and node.depth<MAX_DEPTH then
+     local ups=upvaluesOf(v)
+     if ups then
+      local ct=0
+      for k,uv in pairs(ups) do
+       ct=ct+1
+       if ct>16 then break end
+       if type(uv)=='table' or type(uv)=='function' then
+        local nm=low(k)
+        local hint=(stateKeys[nm] and '/'..showKey(k)) or '/[upvalue]'
+        enqueue(uv,node.source,node.path..hint,node.depth+1)
+       end
+      end
+     end
+    end
+   else
+    local cat={}
+    local states={}
+    local child=0
+    for k,cv in pairs(v) do
+     tableKeysChecked=tableKeysChecked+1
+     child=child+1
+     local lk=low(k)
+     if collectionKeys[lk] and type(cv)=='table' then
+      local n,t,nn,s,o,capped=summarizeCollection(cv)
+      cat[#cat+1]={name=clean(k,32),n=n,t=t,num=nn,str=s,other=o,capped=capped}
+     end
+     if stateKeys[lk] then
+      states[#states+1]=clean(k,32)..':'..type(cv)
+     end
+     if type(cv)=='function' and (functionsOfInterest[lk] or lk:find('inventory',1,true) or lk:find('playerdata',1,true)) then
+      local hint=node.source..' '..clean(k,55)
+      if not seenHints[hint] and #getterNames<28 then
+       getterNames[#getterNames+1]=hint
+       seenHints[hint]=true
+      end
+     end
+     if child<=42 and node.depth<MAX_DEPTH then
+      enqueue(cv,node.source,node.path..'/'..showKey(k),node.depth+1)
+     end
+     if child>=95 or tableKeysChecked>=MAX_TABLE_KEYS then break end
+    end
+    if (#cat>0 or #states>=2) and #candidates<MAX_RESULTS then
+     local score=#cat*4+#states*2
+     if node.source:lower():find('playerdata',1,true) then score=score+3 end
+     if node.source:lower():find('waitforplayerdata',1,true) then score=score+3 end
+     candidates[#candidates+1]={score=score,source=node.source,path=node.path,cat=cat,states=states}
+    end
+   end
+  end
+  if examined%55==0 then task.wait() end
+ end
+end
 
-local ORDER={'Fish','Rods','Baits','Items','Gear','Pets','Stones','Charms','Emotes','Abilities','Potions','Boats','Lanterns','Halos'}
-local FIELDS={'inventory','data','collection','quantity','id','mutation','rarity','weight','name'}
-local function fmtShape(s)
-    if not s then return 'NO BODY SUMMARY' end
-    local a={'bytes='..tostring(s.bytes)..' | format='..tostring(s.fmt)..' | parsed='..tostring(s.parsed)}
-    if s.parsed then
-        a[#a+1]='root='..tostring(s.root)..' | objects='..tostring(s.objects)..' | arrays='..tostring(s.arrays)..' | largestArray='..tostring(s.maxArray)
-        a[#a+1]='nodes='..tostring(s.inspected)..' | maxDepth='..tostring(s.maxDepth)..' | truncated='..tostring(s.truncated)
-        local scal=s.scalarTypes
-        a[#a+1]='scalar values: string='..tostring(scal.string)..' number='..tostring(scal.number)..' bool='..tostring(scal.boolean)
-        local categories={}
-        for _,k in ipairs(ORDER) do
-            local c=s.categories[k]
-            if c then categories[#categories+1]=k..'(seen='..c.hits..',entries<='..c.maxEntries..',type='..c.type..')' end
-        end
-        a[#a+1]='CATEGORIES: '..(#categories>0 and table.concat(categories,' ; ') or '(none identified)')
-        local fields={}
-        for _,k in ipairs(FIELDS) do
-            if s.fields[k] then fields[#fields+1]=k..'='..s.fields[k] end
-        end
-        a[#a+1]='SAFE FIELD COUNTS: '..(#fields>0 and table.concat(fields,', ') or '(none identified)')
-    end
-    return table.concat(a,'\n  ')
+local function run()
+ say('KIMS V16 | PLAYERDATA SOURCE TRACE | READ ONLY')
+ say('PlaceId='..tostring(game.PlaceId))
+ say('GOAL: locate client PlayerData / state / inventory source paths.')
+ say('No Zetsu loader, no HTTP, no getgc, no remotes, no game getter calls.')
+ say('Only metadata + counts; no item names, user data or credentials.')
+ say('')
+ say('=== LOADED PLAYERDATA / INVENTORY MODULES ===')
+ if type(getloadedmodules)~='function' then
+  say('getloadedmodules unavailable. Unable to inspect cached module exports.')
+  return
+ end
+ local ok,mods=pcall(getloadedmodules)
+ if not ok or type(mods)~='table' then
+  say('getloadedmodules failed. No data source claimed.')
+  return
+ end
+ baselineCount=#mods
+ local matches={}
+ for i,mod in ipairs(mods) do
+  if typeof(mod)=='Instance' and mod:IsA('ModuleScript') then
+   local p=safePath(mod)
+   local score=moduleRank(p)
+   if score>0 then matches[#matches+1]={obj=mod,path=p,score=score} end
+  end
+  if i%350==0 then task.wait() end
+ end
+ table.sort(matches,function(a,b)
+  if a.score~=b.score then return a.score>b.score end
+  return a.path<b.path
+ end)
+ say('Loaded='..baselineCount..' | targeted paths='..#matches)
+ for i=1,math.min(#matches,32) do
+  say('TARGET '..i..' score='..matches[i].score..' '..matches[i].path)
+ end
+ if #matches>32 then say('...more targeted paths omitted from text.') end
+ refresh()
+ local total=math.min(#matches,MAX_MODULES)
+ local attempted,readable=0,0
+ local deadline=os.clock()+CPU_SECONDS
+ say('')
+ say('=== CACHED EXPORT + UPVALUE MAP ===')
+ for i=1,total do
+  if cancelled or os.clock()>deadline then break end
+  local target=matches[i]
+  status.Text='Memeriksa modul '..i..'/'..total
+  attempted=attempted+1
+  -- Because this module is already in getloadedmodules(), require normally returns
+  -- a cached export. Not guaranteed on every modified executor / game runtime.
+  local okReq,export=pcall(require,target.obj)
+  if not okReq then
+   say('MODULE '..clean(target.path,90)..' => inaccessible')
+  else
+   readable=readable+1
+   say('MODULE '..clean(target.path,95)..' => '..type(export))
+   enqueue(export,target.path,'[export]',0)
+  end
+  if i%3==0 then refresh() end
+  task.wait()
+ end
+ traverse(deadline)
+ say('Modules read='..readable..'/'..attempted)
+ say('Graph nodes='..examined..' | functions='..functionCount..' | fields checked='..tableKeysChecked)
+ if qi<=#queue then say('LIMIT: remaining nodes unexamined (bounded).') end
+ say('')
+ say('=== POTENTIAL GETTERS (NAMES ONLY - NOT CALLED) ===')
+ if #getterNames==0 then say('No named getters identified in inspected exports.') end
+ table.sort(getterNames)
+ for i=1,math.min(#getterNames,25) do say('GETTER '..getterNames[i]) end
+ say('')
+ say('=== CLIENT STATE / CATEGORY SHAPES ===')
+ table.sort(candidates,function(a,b) return a.score>b.score end)
+ if #candidates==0 then say('No candidate state table shape identified in bounded inspection.') end
+ for i=1,math.min(#candidates,18) do
+  local c=candidates[i]
+  say('C'..i..' score='..c.score..' module='..clean(c.source,110))
+  say('  path='..clean(c.path,130))
+  if #c.states>0 then say('  keys='..table.concat(c.states,', ',1,math.min(#c.states,10))) end
+  for j=1,math.min(#c.cat,9) do
+   local d=c.cat[j]
+   say('  '..d.name..': entries='..d.n..(d.capped and '+' or '')..' values[T/N/S/O]='..d.t..'/'..d.num..'/'..d.str..'/'..d.other)
+  end
+ end
+ say('')
+ say('=== AUDIT ===')
+ say('Ownership NOT VERIFIED. Category counts are not inventory quantities.')
+ say('A data-shaped table might be configuration, catalog, or GUI state.')
+ say('V14 GUI counters remain the only verified totals; not read here.')
+ say('Next analysis: link named getter/state path to owned-item record shape.')
+ say('Never send Zetsu API keys, headers or raw request payloads.')
 end
-local function report()
-    local rows={
-        'KIMS ZETSU MONITOR V2 | SAFE POST STRUCTURE ONLY',
-        'PlaceId='..tostring(game.PlaceId)..' | elapsed='..sec()..'s | '..(S.active and 'RECORDING' or 'STOPPED'),
-        'Marked='..(S.marker and tostring(math.floor(S.marker-started))..'s' or 'NO'),
-        'No raw URLs, credentials, headers, bodies, usernames, item names or values retained.',
-        'Only POST metadata for stats.zetsu.lol is reported.',
-        '', '=== HOOK STATUS ==='
-    }
-    for _,x in ipairs(S.hooks) do rows[#rows+1]=x end
-    rows[#rows+1]=''
-    rows[#rows+1]='=== POST METADATA ==='
-    rows[#rows+1]='Observed='..S.attempts..' | displayed='..#S.posts..' | dropped='..S.dropped..' | parser errors='..S.exceptions
-    for i,row in ipairs(S.posts) do
-        rows[#rows+1]=''
-        rows[#rows+1]='POST '..i..' @'..row.at..'s | afterMark='..tostring(row.after)..' | via='..row.source
-        rows[#rows+1]='  '..fmtShape(row.shape)
-    end
-    rows[#rows+1]=''
-    rows[#rows+1]='=== LIMITATIONS ==='
-    rows[#rows+1]='Only observed executor-level POST calls; native/hidden requests may not be seen.'
-    rows[#rows+1]='A detected inventory-shaped request does not prove how Zetsu read client data.'
-    rows[#rows+1]='No copied API credentials or raw request payload. No automatic uploads.'
-    return table.concat(rows,'\n')
+
+local function copyReport()
+ if busy then status.Text='Tunggu proses selesai';return end
+ local fn=(type(setclipboard)=='function' and setclipboard) or
+          (type(toclipboard)=='function' and toclipboard)
+ if not fn then status.Text='Clipboard tidak didukung';return end
+ local ok=pcall(fn,table.concat(lines,'\n'))
+ status.Text=ok and 'Laporan tersalin - kirim ke chat' or 'Gagal menyalin'
 end
-mark.MouseButton1Click:Connect(function()
-    if not S.marker then S.marker=os.clock(); mark.Text='DITANDAI' end
+copyBtn.MouseButton1Click:Connect(copyReport)
+local minimized=false
+miniBtn.MouseButton1Click:Connect(function()
+ minimized=not minimized
+ if minimized then
+  sc.Visible=false
+  panel.Size=UDim2.new(.94,0,0,112)
+  miniBtn.Text='BUKA'
+ else
+  panel.Size=UDim2.new(.94,0,.68,0)
+  sc.Visible=true
+  miniBtn.Text='MINI'
+ end
 end)
-stop.MouseButton1Click:Connect(function()
-    S.active=false; S.stopped=true; stop.Text='STOPPED'; lbl.Text=report()
-    info.Text='STOPPED | tekan SALIN'
+closeBtn.MouseButton1Click:Connect(function()
+ cancelled=true
+ screen:Destroy()
 end)
-copy.MouseButton1Click:Connect(function()
-    local txt=report()
-    lbl.Text=txt
-    if type(setclipboard)=='function' then
-        local ok=pcall(setclipboard,txt)
-        info.Text=ok and 'Laporan aman tersalin.' or 'Salin gagal, baca panel.'
-    else info.Text='setclipboard tidak tersedia di Delta.' end
-end)
-local collapsed=false
-mini.MouseButton1Click:Connect(function()
-    collapsed=not collapsed
-    frame.Size=collapsed and UDim2.new(.92,0,0,110) or UDim2.new(.92,0,.56,0)
-    scroll.Visible=not collapsed
-    mini.Text=collapsed and 'BUKA' or 'MINI'
-end)
-local function close()
-    S.active=false; S.stopped=true
-    if gui.Parent then gui:Destroy() end
+-- Touch/mouse dragging.
+do
+ local dragging=false
+ local startPos=nil
+ local original=nil
+ title.InputBegan:Connect(function(input)
+  if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseButton1 then
+   dragging=true;startPos=input.Position;original=panel.Position
+  end
+ end)
+ title.InputEnded:Connect(function(input)
+  if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end
+ end)
+ UserInputService.InputChanged:Connect(function(input)
+  if cancelled or not dragging or not startPos then return end
+  if input.UserInputType==Enum.UserInputType.Touch or input.UserInputType==Enum.UserInputType.MouseMovement then
+   local delta=input.Position-startPos
+   panel.Position=UDim2.new(original.X.Scale,original.X.Offset+delta.X,original.Y.Scale,original.Y.Offset+delta.Y)
+  end
+ end)
 end
-S.close=close
-closeBtn.MouseButton1Click:Connect(close)
-S.hooks[#S.hooks+1]='Method: only executor request hooks (no game remote hooking)'
-lbl.Text=report()
+refresh()
 task.spawn(function()
-    while gui.Parent and not S.stopped do
-        info.Text='REC ON | POST='..tostring(S.attempts)..(S.marker and ' | ZETSU MARKED' or ' | tekan TANDA')
-        lbl.Text=report()
-        task.wait(1.8)
-    end
+ local success,err=pcall(run)
+ busy=false
+ if not cancelled then
+  if not success then say('ERROR: '..clean(err,140)) end
+  refresh()
+  status.Text=success and 'SELESAI - tekan SALIN' or 'ERROR - tekan SALIN'
+ end
 end)
