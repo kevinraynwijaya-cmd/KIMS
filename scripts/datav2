@@ -1,104 +1,96 @@
-local close=button('TUTUP',.75,.22)
-local status=label(frame,UDim2.new(.03,0,0,80),UDim2.new(.94,0,0,26),'Siap')
-local scroll=Instance.new('ScrollingFrame',frame)
-scroll.Position=UDim2.new(.03,0,0,110); scroll.Size=UDim2.new(.94,0,1,-120)
-scroll.BackgroundColor3=Color3.fromRGB(22,28,46); scroll.ScrollBarThickness=6
-scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
-local output=label(scroll,UDim2.new(0,7,0,5),UDim2.new(1,-20,0,0),'')
-output.AutomaticSize=Enum.AutomaticSize.Y; output.TextWrapped=true
-local alive=true
-local busy=false
-local report=''
-local function clean(v)
- return tostring(v):gsub('%c',' '):sub(1,160)
+-- KIMS TECH | INVENTORY DATA TRACE V10
+-- Single-run read-only audit for Fish It / Roblox client.
+-- Replion require only. No remote calls, HTTP, file writes or item changes.
+-- Does not claim that arbitrary cache tables represent owned inventory.
+-- Created for manual execution in Delta Android. Open panel > LACAK > SALIN.
+local Players = game:GetService('Players')
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local player = Players.LocalPlayer
+if not player then return end
+local pg = player:WaitForChild('PlayerGui')
+local old = pg:FindFirstChild('KIMSDataTraceV10Replion')
+if old then old:Destroy() end
+local screen = Instance.new('ScreenGui')
+screen.Name = 'KIMSDataTraceV10Replion'
+screen.ResetOnSpawn = false
+screen.DisplayOrder = 1000
+screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screen.Parent = pg
+local panel = Instance.new('Frame')
+panel.Size = UDim2.new(.94,0,.76,0)
+panel.Position = UDim2.new(.03,0,.11,0)
+panel.BackgroundColor3 = Color3.fromRGB(12,17,34)
+panel.BorderSizePixel = 0
+panel.Parent = screen
+Instance.new('UICorner',panel).CornerRadius = UDim.new(0,12)
+local border = Instance.new('UIStroke',panel)
+border.Thickness = 2
+border.Color = Color3.fromRGB(108,91,225)
+local function label(parent,s,pos,size,color)
+    local t = Instance.new('TextLabel')
+    t.BackgroundTransparency = 1
+    t.Position = pos
+    t.Size = size
+    t.Text = s
+    t.Font = Enum.Font.Code
+    t.TextSize = 12
+    t.TextColor3 = color or Color3.fromRGB(230,235,250)
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.TextYAlignment = Enum.TextYAlignment.Top
+    t.Parent = parent
+    return t
 end
-local function inspect()
- if busy or not alive then return end
- busy=true; scan.Text='MEMBACA...'; status.Text='Menunggu Replion, maksimal 15 detik...'
- local lines={'KIMS REPLION INVENTORY PROBE','USER: @'..player.Name,
-  'PlaceId: '..tostring(game.PlaceId),'Local snapshot; no upload or item changes.',''}
- local function add(s) lines[#lines+1]=s end
- local ok,err=pcall(function()
-  local packages=RS:FindFirstChild('Packages')
-  local module=packages and packages:FindFirstChild('Replion')
-  if not module then error('ReplicatedStorage.Packages.Replion tidak ditemukan') end
-  local Replion=require(module)
-  if type(Replion)~='table' or not Replion.Client then error('Replion.Client tidak tersedia') end
-  -- Isolate potentially yielding require/WaitReplion in this worker.
-  local data=Replion.Client:WaitReplion('Data')
-  if not alive or not busy then return end
-  add('Replion Data: TERBACA')
-  local inventory=data:GetExpect('Inventory')
-  if type(inventory)~='table' then error('Inventory bukan table: '..type(inventory)) end
-  add('Inventory: TERBACA')
-  add('=== KATEGORI (maksimal 40) ===')
-  local count=0
-  for k,v in pairs(inventory) do
-   count=count+1; if count>40 then add('[kategori dibatasi]');break end
-   add(clean(k)..' : '..type(v))
-  end
-  local items=inventory.Items
-  if type(items)~='table' then
-   add('Inventory.Items: BELUM TERBACA (bukan berarti kosong)');return
-  end
-  local n=0;local samples={};local capped=false
-  for _,item in pairs(items) do
-   n=n+1
-   if #samples<5 then samples[#samples+1]=item end
-   if n>=20000 then capped=true;break end
-   if n%500==0 then task.wait() end
-  end
-  add('');add('Inventory.Items: TERBACA')
-  add('Jumlah entri: '..n..(capped and ' [batas scan 20000; total bisa lebih]' or ''))
-  add('Jumlah entri belum tentu jumlah ikan/quantity.')
-  -- Only expose inventory field values; truncate strings, never traverse other player data.
-  local function fields(t,prefix,depth)
-   local used=0
-   for k,v in pairs(t) do
-    used=used+1; if used>24 then add(prefix..'[field dibatasi]');break end
-    local key=clean(k)
-    if type(v)=='table' then
-     add(prefix..key..' = [table]')
-     if depth<2 then fields(v,prefix..'  ',depth+1) end
-    elseif type(v)=='string' or type(v)=='number' or type(v)=='boolean' then
-     add(prefix..key..' = '..clean(v))
-    else add(prefix..key..' = ['..type(v)..']') end
-   end
-  end
-  for i,item in ipairs(samples) do
-   add('');add('=== CONTOH ITEM '..i..' ===')
-   if type(item)=='table' then fields(item,'',0) else add('type='..type(item)..' value='..clean(item)) end
-  end
-  if n==0 then add('Items kosong pada snapshot ini; isi inventory belum terkonfirmasi.') end
- end)
- if not alive or not busy then return end
- if not ok then add('ERROR: '..clean(err)) end
- report=table.concat(lines,'\n'); output.Text=report
- status.Text='SELESAI - tekan SALIN HASIL';scan.Text='SCAN ULANG';busy=false
+local heading = label(panel,'KIMS V10 + REPLION | INVENTORY TRACE',UDim2.new(.02,0,.012,0),UDim2.new(.96,0,0,27),Color3.fromRGB(190,180,255))
+heading.Font = Enum.Font.GothamBold
+heading.TextSize = 15
+local function button(txt,x)
+    local b = Instance.new('TextButton')
+    b.Position = UDim2.new(x,0,0,39)
+    b.Size = UDim2.new(.29,0,0,35)
+    b.Text = txt
+    b.Font = Enum.Font.GothamBold
+    b.TextScaled = true
+    b.TextColor3 = Color3.new(1,1,1)
+    b.BackgroundColor3 = Color3.fromRGB(64,57,119)
+    b.Parent = panel
+    Instance.new('UICorner',b).CornerRadius = UDim.new(0,6)
+    return b
 end
--- Each scan has its own generation so late workers cannot overwrite newer results.
-local generation=0
-local function start()
- if busy then return end
- generation=generation+1
- local id=generation
- task.spawn(inspect)
- task.delay(15,function()
-  if alive and generation==id and busy then
-   alive=false -- retire this UI's pending worker before allowing another execution
-   report='KIMS REPLION INVENTORY PROBE\nTIMEOUT: Replion/module/data belum siap dalam 15 detik.\nBuka inventory, lalu jalankan ulang skrip. Ini bukan hasil inventory kosong.'
-   output.Text=report; status.Text='TIMEOUT - SALIN atau jalankan ulang skrip'
-   busy=false;scan.Text='JALANKAN ULANG SKRIP'
-  end
- end)
+local runBtn = button('LACAK',.02)
+local copyBtn = button('SALIN',.35)
+local closeBtn = button('TUTUP',.68)
+local status = label(panel,'Siap. Tekan LACAK sekali.',UDim2.new(.02,0,0,83),UDim2.new(.96,0,0,20),Color3.fromRGB(110,226,165))
+local sc = Instance.new('ScrollingFrame')
+sc.Position = UDim2.new(.02,0,0,108)
+sc.Size = UDim2.new(.96,0,1,-117)
+sc.BackgroundColor3 = Color3.fromRGB(20,27,46)
+sc.BorderSizePixel = 0
+sc.ScrollBarThickness = 7
+sc.AutomaticCanvasSize = Enum.AutomaticSize.Y
+sc.Parent = panel
+local out = label(sc,'',UDim2.new(0,7,0,7),UDim2.new(1,-23,0,0))
+out.TextWrapped = true
+out.AutomaticSize = Enum.AutomaticSize.Y
+local lines = {}
+local busy,done,closed = false,false,false
+local MAX_GC = 330000
+local MAX_CANDIDATES = 40
+local MAX_KEYS = 550
+local MAX_FUNCTIONS_ENV = 8500
+local MAX_CONTROLLER_MATCHES = 16
+local MAX_UPVALUES = 22
+local CATEGORY_NAMES = {'Fish','Fishing Rods','Baits','Potions','Pets','Pet Eggs','Enchant Stones','Charms','Boats','Gears','Lanterns','Halos','Emotes'}
+local function add(s)
+    if #lines < 400 then lines[#lines+1] = tostring(s) end
 end
-scan.MouseButton1Click:Connect(start)
-copy.MouseButton1Click:Connect(function()
- if busy then status.Text='Tunggu scan selesai';return end
- local fn=(type(setclipboard)=='function' and setclipboard) or (type(toclipboard)=='function' and toclipboard)
- if not fn then status.Text='Clipboard tidak didukung; screenshot hasil';return end
- local ok=pcall(fn,report);status.Text=ok and 'HASIL TERSALIN' or 'SALIN GAGAL'
-end)
-close.MouseButton1Click:Connect(function() alive=false;gui:Destroy() end)
-gui.AncestryChanged:Connect(function() if not gui.Parent then alive=false end end)
-start()
+local function redraw()
+    if not closed then out.Text = table.concat(lines,'\n') end
+end
+local function short(s,maxlen)
+    return tostring(s or ''):gsub('[\r\n]',' '):sub(1,maxlen or 100)
+end
+local function countTable(t,limit)
+    if type(t) ~= 'table' then return 0,false end
+    local n=0
+    for _ in pairs(t) do
+        n=n+1
