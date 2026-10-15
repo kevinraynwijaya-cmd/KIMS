@@ -1,331 +1,104 @@
--- KIMS TECH | FISH STATE TRACE V22
--- Read-only bounded map of already-loaded client states OUTSIDE Data.Inventory.
--- No getgc, HTTP, remotes, network uploads, game getter calls, or item mutations.
--- Never prints ID/UUID values, item names, channel IDs, tokens or account secrets.
-local Players=game:GetService('Players')
-local UIS=game:GetService('UserInputService')
-local me=Players.LocalPlayer
-if not me then return end
-local pg=me:WaitForChild('PlayerGui')
-local old=pg:FindFirstChild('KIMSFishStateV22')
-if old then old:Destroy() end
-local gui=Instance.new('ScreenGui')
-gui.Name='KIMSFishStateV22';gui.ResetOnSpawn=false;gui.DisplayOrder=998;gui.Parent=pg
-local panel=Instance.new('Frame',gui)
-panel.Size=UDim2.new(.94,0,.68,0);panel.Position=UDim2.new(.03,0,.15,0)
-panel.BackgroundColor3=Color3.fromRGB(13,19,36);panel.BorderSizePixel=0;panel.Active=true
-Instance.new('UICorner',panel).CornerRadius=UDim.new(0,10)
-local stroke=Instance.new('UIStroke',panel);stroke.Color=Color3.fromRGB(111,93,228);stroke.Thickness=2
-local title=Instance.new('TextLabel',panel)
-title.Position=UDim2.new(.025,0,0,5);title.Size=UDim2.new(.95,0,0,28)
-title.BackgroundTransparency=1;title.Font=Enum.Font.GothamBold;title.TextSize=15
-title.Text='KIMS V22 | FISH STATE TRACE';title.TextColor3=Color3.fromRGB(207,195,255)
-title.TextXAlignment=Enum.TextXAlignment.Left
-local function btn(s,x,w)
- local b=Instance.new('TextButton',panel)
- b.Position=UDim2.new(x,0,0,42);b.Size=UDim2.new(w,0,0,33)
- b.Text=s;b.TextScaled=true;b.Font=Enum.Font.GothamBold
- b.BackgroundColor3=Color3.fromRGB(67,58,128);b.TextColor3=Color3.new(1,1,1)
- Instance.new('UICorner',b).CornerRadius=UDim.new(0,7)
- return b
+local close=button('TUTUP',.75,.22)
+local status=label(frame,UDim2.new(.03,0,0,80),UDim2.new(.94,0,0,26),'Siap')
+local scroll=Instance.new('ScrollingFrame',frame)
+scroll.Position=UDim2.new(.03,0,0,110); scroll.Size=UDim2.new(.94,0,1,-120)
+scroll.BackgroundColor3=Color3.fromRGB(22,28,46); scroll.ScrollBarThickness=6
+scroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+local output=label(scroll,UDim2.new(0,7,0,5),UDim2.new(1,-20,0,0),'')
+output.AutomaticSize=Enum.AutomaticSize.Y; output.TextWrapped=true
+local alive=true
+local busy=false
+local report=''
+local function clean(v)
+ return tostring(v):gsub('%c',' '):sub(1,160)
 end
-local copy=btn('SALIN',.025,.28)
-local mini=btn('MINI',.357,.26)
-local close=btn('TUTUP',.682,.29)
-local status=Instance.new('TextLabel',panel)
-status.Position=UDim2.new(.025,0,0,81);status.Size=UDim2.new(.95,0,0,23)
-status.BackgroundTransparency=1;status.Font=Enum.Font.Code;status.TextSize=12
-status.TextXAlignment=Enum.TextXAlignment.Left;status.TextColor3=Color3.fromRGB(115,230,167)
-status.Text='Membaca state client yang sudah dimuat...'
-local sc=Instance.new('ScrollingFrame',panel)
-sc.Position=UDim2.new(.025,0,0,109);sc.Size=UDim2.new(.95,0,1,-119)
-sc.BackgroundColor3=Color3.fromRGB(21,28,47);sc.BorderSizePixel=0
-sc.ScrollBarThickness=6;sc.AutomaticCanvasSize=Enum.AutomaticSize.Y
-local output=Instance.new('TextLabel',sc)
-output.Position=UDim2.new(0,7,0,5);output.Size=UDim2.new(1,-19,0,0)
-output.AutomaticSize=Enum.AutomaticSize.Y;output.BackgroundTransparency=1
-output.TextWrapped=true;output.TextXAlignment=Enum.TextXAlignment.Left
-output.TextYAlignment=Enum.TextYAlignment.Top;output.Font=Enum.Font.Code
-output.TextSize=12;output.TextColor3=Color3.fromRGB(229,236,250)
-
-local lines={};local done=false;local cancelled=false
-local function log(s) if #lines<185 then lines[#lines+1]=tostring(s) end end
-local function redraw() if gui.Parent then output.Text=table.concat(lines,'\n') end end
-local function getUps(f)
- if type(getupvalues)=='function' then
-  local ok,v=pcall(getupvalues,f)
-  if ok and type(v)=='table' then return v end
- end
- if type(debug)=='table' and type(debug.getupvalues)=='function' then
-  local ok,v=pcall(debug.getupvalues,f)
-  if ok and type(v)=='table' then return v end
- end
- return nil
-end
-local function readFishCount()
- local p=pg:FindFirstChild('Inventory')
- for _,name in ipairs({'Main','Top','Options','Fish','Label','BagSize'}) do
-  p=p and p:FindFirstChild(name)
- end
- if not p or not (p:IsA('TextLabel') or p:IsA('TextButton')) then return nil end
- local s=tostring(p.Text):gsub(',','')
- local n=s:match('(%d+)%s*/%s*%d+')
- return n and tonumber(n) or nil
-end
-local important={Data=true,Inventory=true,Replions=true,Replion=true,Client=true,
- Registry=true,State=true,Channels=true,Fish=true,Fishes=true,FishInventory=true,
- FishStorage=true,FishBag=true,Storage=true,Bag=true,Items=true,Cache=true,
- PlayerData=true,Players=true,Channel=true,Internal=true,Records=true}
-local function keyLabel(k)
- if type(k)=='string' and important[k] then return k end
- if type(k)=='string' then
-  local lower=k:lower()
-  if #k<=36 and (lower:find('fish',1,true) or lower:find('catch',1,true)
-    or lower:find('storage',1,true)) and not lower:find('password',1,true)
-    and not lower:find('secret',1,true) and not lower:find('token',1,true)
-    and not lower:find('auth',1,true) then return k end
- end
- return '[entry]'
-end
-local function safeChannel(v)
- if type(v)~='string' then return '(not shown; type='..type(v)..')' end
- local approved={Data=true,Inventory=true,PlayerData=true,Fish=true,Fishes=true,FishInventory=true}
- return approved[v] and v or '(redacted)'
-end
-local function itemShape(rec)
- if type(rec)~='table' then return '(non-table)' end
- local names={}
- for _,k in ipairs({'Id','UUID','Quantity','Weight','FishWeight','Mutation','Variant','Rarity','Timestamp','Size','Species','FishId'}) do
-  local v=rawget(rec,k)
-  if v~=nil then names[#names+1]=k..':'..type(v) end
- end
- return #names>0 and table.concat(names,',') or '(no standard item fields)'
-end
-local function stats(t,cap)
- local n=0;local sample=0;local iduuid=0;local fishMeta=0;local shape='(none)'
- for _,r in pairs(t) do
-  n=n+1
-  if sample<14 then
-   sample=sample+1
-   if type(r)=='table' then
-    if rawget(r,'Id')~=nil and rawget(r,'UUID')~=nil then iduuid=iduuid+1 end
-    if rawget(r,'Weight')~=nil or rawget(r,'FishWeight')~=nil or
-       rawget(r,'Mutation')~=nil or rawget(r,'Variant')~=nil then fishMeta=fishMeta+1 end
-    if shape=='(none)' then shape=itemShape(r) end
+local function inspect()
+ if busy or not alive then return end
+ busy=true; scan.Text='MEMBACA...'; status.Text='Menunggu Replion, maksimal 15 detik...'
+ local lines={'KIMS REPLION INVENTORY PROBE','USER: @'..player.Name,
+  'PlaceId: '..tostring(game.PlaceId),'Local snapshot; no upload or item changes.',''}
+ local function add(s) lines[#lines+1]=s end
+ local ok,err=pcall(function()
+  local packages=RS:FindFirstChild('Packages')
+  local module=packages and packages:FindFirstChild('Replion')
+  if not module then error('ReplicatedStorage.Packages.Replion tidak ditemukan') end
+  local Replion=require(module)
+  if type(Replion)~='table' or not Replion.Client then error('Replion.Client tidak tersedia') end
+  -- Isolate potentially yielding require/WaitReplion in this worker.
+  local data=Replion.Client:WaitReplion('Data')
+  if not alive or not busy then return end
+  add('Replion Data: TERBACA')
+  local inventory=data:GetExpect('Inventory')
+  if type(inventory)~='table' then error('Inventory bukan table: '..type(inventory)) end
+  add('Inventory: TERBACA')
+  add('=== KATEGORI (maksimal 40) ===')
+  local count=0
+  for k,v in pairs(inventory) do
+   count=count+1; if count>40 then add('[kategori dibatasi]');break end
+   add(clean(k)..' : '..type(v))
+  end
+  local items=inventory.Items
+  if type(items)~='table' then
+   add('Inventory.Items: BELUM TERBACA (bukan berarti kosong)');return
+  end
+  local n=0;local samples={};local capped=false
+  for _,item in pairs(items) do
+   n=n+1
+   if #samples<5 then samples[#samples+1]=item end
+   if n>=20000 then capped=true;break end
+   if n%500==0 then task.wait() end
+  end
+  add('');add('Inventory.Items: TERBACA')
+  add('Jumlah entri: '..n..(capped and ' [batas scan 20000; total bisa lebih]' or ''))
+  add('Jumlah entri belum tentu jumlah ikan/quantity.')
+  -- Only expose inventory field values; truncate strings, never traverse other player data.
+  local function fields(t,prefix,depth)
+   local used=0
+   for k,v in pairs(t) do
+    used=used+1; if used>24 then add(prefix..'[field dibatasi]');break end
+    local key=clean(k)
+    if type(v)=='table' then
+     add(prefix..key..' = [table]')
+     if depth<2 then fields(v,prefix..'  ',depth+1) end
+    elseif type(v)=='string' or type(v)=='number' or type(v)=='boolean' then
+     add(prefix..key..' = '..clean(v))
+    else add(prefix..key..' = ['..type(v)..']') end
    end
   end
-  if n>=cap then break end
- end
- return n,sample,iduuid,fishMeta,shape
+  for i,item in ipairs(samples) do
+   add('');add('=== CONTOH ITEM '..i..' ===')
+   if type(item)=='table' then fields(item,'',0) else add('type='..type(item)..' value='..clean(item)) end
+  end
+  if n==0 then add('Items kosong pada snapshot ini; isi inventory belum terkonfirmasi.') end
+ end)
+ if not alive or not busy then return end
+ if not ok then add('ERROR: '..clean(err)) end
+ report=table.concat(lines,'\n'); output.Text=report
+ status.Text='SELESAI - tekan SALIN HASIL';scan.Text='SCAN ULANG';busy=false
 end
-local function run()
- log('KIMS V22 | FISH STATE TRACE | STRUCTURE ONLY')
- log('PlaceId='..tostring(game.PlaceId))
- log('Focus: cached Replion state outside Data.Inventory (V21 already audited it).')
- log('No getgc/HTTP/remotes/getter calls/Zetsu/uploads or raw ID and UUID values.')
- local fishCount=readFishCount()
- log('Fish GUI counter='..tostring(fishCount or 'unavailable')..' (can be cached)')
- if type(getloadedmodules)~='function' then log('getloadedmodules unavailable');return end
- local ok,loaded=pcall(getloadedmodules)
- if not ok or type(loaded)~='table' then log('Cannot read loaded modules');return end
- local wanted={
-  ['ReplicatedStorage.Packages.Replion']='Replion',
-  ['ReplicatedStorage.Packages._Index.ytrev_replion@2.0.0-rc.3.replion.Client']='Client',
-  ['ReplicatedStorage.Packages._Index.ytrev_replion@2.0.0-rc.3.replion.Client.ClientReplion']='ClientReplion',
-  ['ReplicatedStorage.Controllers.InventoryController']='InventoryController'
- }
- local found={}
- for i,m in ipairs(loaded) do
-  if typeof(m)=='Instance' and m:IsA('ModuleScript') then
-   local yes,name=pcall(function()return m:GetFullName()end)
-   if yes and wanted[name] then found[#found+1]={m=m,label=wanted[name]} end
+-- Each scan has its own generation so late workers cannot overwrite newer results.
+local generation=0
+local function start()
+ if busy then return end
+ generation=generation+1
+ local id=generation
+ task.spawn(inspect)
+ task.delay(15,function()
+  if alive and generation==id and busy then
+   alive=false -- retire this UI's pending worker before allowing another execution
+   report='KIMS REPLION INVENTORY PROBE\nTIMEOUT: Replion/module/data belum siap dalam 15 detik.\nBuka inventory, lalu jalankan ulang skrip. Ini bukan hasil inventory kosong.'
+   output.Text=report; status.Text='TIMEOUT - SALIN atau jalankan ulang skrip'
+   busy=false;scan.Text='JALANKAN ULANG SKRIP'
   end
-  if i%650==0 then task.wait() end
- end
- log('Loaded modules='..#loaded..' | targeted='..#found)
- local queue={};local head=1
- local visited=setmetatable({},{__mode='k'})
- local function push(v,path,depth,source)
-  if (type(v)=='table' or type(v)=='function') and #queue<7000 and depth<=9 then
-   queue[#queue+1]={v=v,path=path,depth=depth,source=source}
-  end
- end
- for _,target in ipairs(found) do
-  local worked,export=pcall(require,target.m) -- already-loaded modules; cached exports
-  log('MODULE '..target.label..' -> '..(worked and type(export) or 'unavailable'))
-  if worked then
-   push(export,target.label,0,target.label)
-   if type(export)=='table' and type(rawget(export,'Client'))=='table' then
-    push(rawget(export,'Client'),target.label..'/Client',0,target.label)
-   end
-  end
- end
- local seenInventory=setmetatable({},{__mode='k'})
- local stateLines={};local fishLines={};local rootLines={}
- local stateCount=0;local fishMatches=0;local rootCount=0
- local checked=0;local functions=0;local fields=0
- local started=os.clock();local deadline=started+17
- while head<=#queue and not cancelled and checked<2600 and fields<18500 and os.clock()<deadline do
-  local node=queue[head];head=head+1
-  local v=node.v
-  if not visited[v] then
-   visited[v]=true;checked=checked+1
-   if type(v)=='function' then
-    functions=functions+1
-    if functions<=330 and node.depth<9 then
-     local ups=getUps(v)
-     if ups then
-      local i=0
-      for _,x in pairs(ups) do
-       i=i+1
-       if i>14 then break end
-       push(x,node.path..'/[upvalue]',node.depth+1,node.source)
-      end
-     end
-    end
-   elseif type(v)=='table' then
-    local data=rawget(v,'Data')
-    local channel=rawget(v,'Channel')
-    if type(data)=='table' and (channel~=nil or type(rawget(v,'Get'))=='function') then
-     stateCount=stateCount+1
-     if #stateLines<14 then
-      local inv=rawget(data,'Inventory')
-      local hint={}
-      for k,x in pairs(data) do
-       if type(k)=='string' and keyLabel(k)~='[entry]' then
-        hint[#hint+1]=keyLabel(k)..':'..type(x)
-       end
-       if #hint>=16 then break end
-      end
-      table.sort(hint)
-      stateLines[#stateLines+1]='  STATE '..stateCount..' '..node.source..' channel='..safeChannel(channel)..
-       ' top={'..table.concat(hint,',')..'} inventory='..type(inv)
-     end
-    end
-    if type(data)=='table' and rootCount<12 then
-     local rootNames={}
-     local fishNames={}
-     for k,x in pairs(data) do
-      if type(k)=='string' and keyLabel(k)~='[entry]' and k~='Data' then
-       rootNames[#rootNames+1]=k..':'..type(x)
-       local kl=k:lower()
-       if (kl:find('fish',1,true) or kl:find('catch',1,true)) and type(x)=='table' then
-        local n,s,ids,meta,shape=stats(x,5000)
-        fishNames[#fishNames+1]=k..' entries='..n..' sampledIdUUID='..ids..'/'..s..' fishFields='..meta
-       end
-      end
-      if #rootNames>=28 then break end
-     end
-     if #fishNames>0 or (rawget(data,'Inventory')~=nil and not seenInventory[data]) then
-      rootCount=rootCount+1
-      if #rootLines<9 then
-       table.sort(rootNames);table.sort(fishNames)
-       rootLines[#rootLines+1]='  DATA ROOT '..rootCount..' from '..node.source..
-        ' keys={'..table.concat(rootNames,', ')..'}'
-       for _,s in ipairs(fishNames) do rootLines[#rootLines+1]='    '..s end
-      end
-      seenInventory[data]=true
-     end
-    end
-    local pathLower=node.path:lower()
-    local isFishPath=(pathLower:find('/fish',1,true) or pathLower:find('/catch',1,true))
-    local isRod=(pathLower:find('fishing rods',1,true))
-    if node.depth>1 and not isRod and (isFishPath or
-       (fishCount and #v==fishCount) or
-       (#v>=40 and type(rawget(v,1))=='table')) then
-     local cap=isFishPath and 4500 or 800
-     local n,s,ids,meta,shape=stats(v,cap)
-     local match=fishCount and n==fishCount
-     if (isFishPath and (ids>=2 or meta>=2)) or
-         (match and ids>=4) then
-      fishMatches=fishMatches+1
-      if #fishLines<12 then
-       fishLines[#fishLines+1]='  FISH CANDIDATE '..fishMatches..' source='..node.source..
-        ' path='..node.path:sub(1,115)..' entries='..n..
-        ' sampledIdUUID='..ids..'/'..s..' fishMeta='..meta..
-        ' guiCountMatch='..tostring(match)..' schema='..shape
-      end
-     end
-    end
-    local inspectedHere=0
-    for k,x in pairs(v) do
-     inspectedHere=inspectedHere+1;fields=fields+1
-     local label=keyLabel(k)
-     if node.depth<9 and (inspectedHere<=65 or label~='[entry]') then
-      push(x,node.path..'/'..label,node.depth+1,node.source)
-     end
-     if inspectedHere>=120 or fields>=18500 then break end
-    end
-   end
-   if checked%55==0 then
-    status.Text='Menelusuri '..checked..' node...'
-    task.wait()
-   end
-  end
- end
- log('')
- log('=== REPLION CLIENT STATE (METADATA) ===')
- log('Objects recognized='..stateCount)
- if #stateLines==0 then log('  None with explicit Channel/Get+Data in bounded graph') end
- for _,s in ipairs(stateLines) do log(s) end
- log('')
- log('=== DATA ROOTS WITH INVENTORY OR FISH CLUES ===')
- if #rootLines==0 then log('  No recognized Data-root clues') end
- for _,s in ipairs(rootLines) do log(s) end
- log('')
- log('=== OWNED-FISH-SHAPED LISTS (HYPOTHESES) ===')
- log('Candidates='..fishMatches)
- if #fishLines==0 then log('  No verified fish record list found in this bounded search') end
- for _,s in ipairs(fishLines) do log(s) end
- log('')
- log('=== FINISH ===')
- log('Visited='..checked..' functions='..functions..' fields='..fields)
- log('Graph bounded='..tostring(head<=#queue)..' timeLimit='..tostring(os.clock()>=deadline))
- log('NOTE: V21 confirmed 246 records are Totems, NOT Fish.')
- log('NOTE: A count match is not proof of ownership; no values printed.')
- log('NOTE: No HTTP, remote invocation, item mutation or server access.')
+ end)
 end
+scan.MouseButton1Click:Connect(start)
 copy.MouseButton1Click:Connect(function()
- if not done then status.Text='Tunggu SELESAI';return end
- local clip=type(setclipboard)=='function' and setclipboard or
-            (type(toclipboard)=='function' and toclipboard)
- if not clip then status.Text='Clipboard tidak tersedia';return end
- local ok=pcall(clip,table.concat(lines,'\n'))
- status.Text=ok and 'Laporan tersalin' or 'Gagal menyalin'
+ if busy then status.Text='Tunggu scan selesai';return end
+ local fn=(type(setclipboard)=='function' and setclipboard) or (type(toclipboard)=='function' and toclipboard)
+ if not fn then status.Text='Clipboard tidak didukung; screenshot hasil';return end
+ local ok=pcall(fn,report);status.Text=ok and 'HASIL TERSALIN' or 'SALIN GAGAL'
 end)
-local small=false
-mini.MouseButton1Click:Connect(function()
- small=not small;sc.Visible=not small
- panel.Size=small and UDim2.new(.94,0,0,111) or UDim2.new(.94,0,.68,0)
- mini.Text=small and 'BUKA' or 'MINI'
-end)
-close.MouseButton1Click:Connect(function()cancelled=true;gui:Destroy()end)
-local dragging=false;local start;local original
- title.InputBegan:Connect(function(input)
-  if input.UserInputType==Enum.UserInputType.Touch or
-     input.UserInputType==Enum.UserInputType.MouseButton1 then
-   dragging=true;start=input.Position;original=panel.Position
-  end
- end)
- title.InputEnded:Connect(function(input)
-  if input.UserInputType==Enum.UserInputType.Touch or
-     input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end
- end)
- UIS.InputChanged:Connect(function(input)
-  if cancelled or not dragging or not start then return end
-  if input.UserInputType==Enum.UserInputType.Touch or
-     input.UserInputType==Enum.UserInputType.MouseMovement then
-   local d=input.Position-start
-   panel.Position=UDim2.new(original.X.Scale,original.X.Offset+d.X,
-                           original.Y.Scale,original.Y.Offset+d.Y)
-  end
- end)
-redraw()
-task.spawn(function()
- local ok,err=pcall(run)
- done=true
- if not cancelled then
-  if not ok then log('ERROR: '..tostring(err):sub(1,150)) end
-  redraw();status.Text=ok and 'SELESAI - tekan SALIN' or 'ERROR - tekan SALIN'
- end
-end)
+close.MouseButton1Click:Connect(function() alive=false;gui:Destroy() end)
+gui.AncestryChanged:Connect(function() if not gui.Parent then alive=false end end)
+start()
