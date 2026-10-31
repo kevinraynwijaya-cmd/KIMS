@@ -1,15 +1,15 @@
 --[[
-    KIMS FISHIT HUB V1.0  |  ORIGINAL UI ENGINE
+    KIMS FISHIT HUB V2.0  |  COMPACT MOBILE UI
     For Roblox / Fish It (client-side Luau)
 
-    V1 SCOPE:
+    V2 COMPACT UI SCOPE:
     - Premium purple/cyan UI, touch + mouse dragging, responsive layout
     - Eight working navigation tabs, interactive UI preview controls
     - Minimize to a movable floating launcher
     - Save / load UI configuration, where executor file APIs are available
     - No remote scripts, no analytics, no network requests
 
-    IMPORTANT: This is the approved V1 UI shell, NOT a fishing exploit.
+    IMPORTANT: This is the V2 compact UI shell, NOT a fishing engine.
     Every gameplay switch/action is a VISUAL PREVIEW ONLY and does not
     perform fishing, selling, teleportation, anti-AFK, or rejoining.
     Gameplay integrations require separate development and verification.
@@ -37,10 +37,11 @@ if type(GLOBAL) ~= "table" then
     GLOBAL = _G
 end
 
-if GLOBAL.KIMS_FISHIT_HUB_V1 and type(GLOBAL.KIMS_FISHIT_HUB_V1.Destroy) == "function" then
-    pcall(function()
-        GLOBAL.KIMS_FISHIT_HUB_V1:Destroy()
-    end)
+for _, priorKey in ipairs({"KIMS_FISHIT_HUB_V1", "KIMS_FISHIT_HUB_V2"}) do
+    local prior = GLOBAL[priorKey]
+    if prior and type(prior.Destroy) == "function" then
+        pcall(function() prior:Destroy() end)
+    end
 end
 
 local C = {
@@ -153,7 +154,7 @@ local state = {
 }
 
 local screen = new("ScreenGui", {
-    Name = "KIMS_FISHIT_HUB_V1",
+    Name = "KIMS_FISHIT_HUB_V2",
     ResetOnSpawn = false,
     IgnoreGuiInset = true,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
@@ -171,6 +172,13 @@ if not okParent then
         warn("[KIMS HUB] Could not attach UI: " .. tostring(parentError))
         screen:Destroy()
         return
+    end
+end
+
+for _, oldName in ipairs({"KIMS_FISHIT_HUB_V1", "KIMS_FISHIT_HUB_V2"}) do
+    local priorGui = screen.Parent:FindFirstChild(oldName)
+    if priorGui and priorGui ~= screen and priorGui:IsA("ScreenGui") then
+        pcall(function() priorGui:Destroy() end)
     end
 end
 
@@ -197,25 +205,25 @@ function app:Destroy()
         pcall(function() conn:Disconnect() end)
     end
     if screen then screen:Destroy() end
-    if GLOBAL.KIMS_FISHIT_HUB_V1 == self then
-        GLOBAL.KIMS_FISHIT_HUB_V1 = nil
+    if GLOBAL.KIMS_FISHIT_HUB_V2 == self then
+        GLOBAL.KIMS_FISHIT_HUB_V2 = nil
     end
 end
-GLOBAL.KIMS_FISHIT_HUB_V1 = app
+GLOBAL.KIMS_FISHIT_HUB_V2 = app
 
 -- Window / glow
 local window = new("Frame", {
     Name = "Window",
     AnchorPoint = Vector2.new(0.5, 0.5),
     Position = UDim2.fromScale(0.5, 0.5),
-    Size = UDim2.fromOffset(920, 570),
+    Size = UDim2.fromOffset(520, 355),
     BackgroundColor3 = C.base,
     BorderSizePixel = 0,
     ClipsDescendants = false,
     Active = true,
 }, screen)
-round(window, 18)
-stroke(window, C.accent, 2, 0)
+round(window, 13)
+stroke(window, C.accent, 1.5, 0)
 
 local windowScale = new("UIScale", {Scale = 1}, window)
 
@@ -237,69 +245,69 @@ new("UIGradient", {
 
 local header = new("Frame", {
     Name = "DragHeader",
-    Position = UDim2.fromOffset(0, 7),
-    Size = UDim2.new(1, 0, 0, 64),
+    Position = UDim2.fromOffset(0, 5),
+    Size = UDim2.new(1, 0, 0, 46),
     BackgroundTransparency = 1,
     Active = true,
 }, window)
 
 local brand = new("Frame", {
-    Position = UDim2.fromOffset(14, 9),
-    Size = UDim2.fromOffset(44, 44),
+    Position = UDim2.fromOffset(11, 5),
+    Size = UDim2.fromOffset(32, 32),
     BackgroundColor3 = C.panel2,
     BorderSizePixel = 0,
 }, header)
-round(brand, 13)
+round(brand, 9)
 stroke(brand, C.accent, 1.5, 0)
-textLabel(brand, "K", 27, true, C.white, {
+textLabel(brand, "K", 19, true, C.white, {
     Size = UDim2.fromScale(1, 1),
     TextXAlignment = Enum.TextXAlignment.Center,
 })
-textLabel(header, "KIMS", 21, true, C.white, {
-    Position = UDim2.fromOffset(69, 8), Size = UDim2.fromOffset(66, 25),
+textLabel(header, "KIMS", 16, true, C.white, {
+    Position = UDim2.fromOffset(52, 3), Size = UDim2.fromOffset(55, 22),
 })
-local hubName = textLabel(header, "FISHIT HUB", 19, true, C.accent, {
-    Position = UDim2.fromOffset(138, 9), Size = UDim2.fromOffset(169, 24),
+local hubName = textLabel(header, "FISHIT HUB", 15, true, C.accent, {
+    Position = UDim2.fromOffset(106, 3), Size = UDim2.fromOffset(120, 22),
 })
-textLabel(header, "PREMIUM UI  /  V1.0", 10, false, C.muted, {
-    Position = UDim2.fromOffset(70, 35), Size = UDim2.fromOffset(220, 17),
+textLabel(header, "COMPACT UI / V2", 9, false, C.muted, {
+    Position = UDim2.fromOffset(53, 25), Size = UDim2.fromOffset(175, 13),
 })
 
 local previewTag = new("Frame", {
     AnchorPoint = Vector2.new(1, 0),
-    Position = UDim2.new(1, -102, 0, 17),
-    Size = UDim2.fromOffset(105, 29),
+    Position = UDim2.new(1, -85, 0, 10),
+    Size = UDim2.fromOffset(75, 24),
     BackgroundColor3 = C.panel,
     BorderSizePixel = 0,
 }, header)
 round(previewTag, 14)
 stroke(previewTag, C.amber, 1, 0.15)
-textLabel(previewTag, "UI PREVIEW", 10, true, C.amber, {
+textLabel(previewTag, "UI DEMO", 9, true, C.amber, {
     Size = UDim2.fromScale(1, 1),
     TextXAlignment = Enum.TextXAlignment.Center,
 })
 
 local minButton = textButton(header, "-", {
     AnchorPoint = Vector2.new(1, 0),
-    Position = UDim2.new(1, -52, 0, 13),
-    Size = UDim2.fromOffset(35, 35),
+    Position = UDim2.new(1, -44, 0, 8),
+    Size = UDim2.fromOffset(29, 29),
     BackgroundColor3 = C.panel,
     TextSize = 22,
 })
-round(minButton, 10)
+round(minButton, 8)
 
 local exitButton = textButton(header, "X", {
     AnchorPoint = Vector2.new(1, 0),
-    Position = UDim2.new(1, -12, 0, 13),
-    Size = UDim2.fromOffset(35, 35),
+    Position = UDim2.new(1, -9, 0, 8),
+    Size = UDim2.fromOffset(29, 29),
     BackgroundColor3 = C.panel,
     TextSize = 14,
 })
-round(exitButton, 10)
+round(exitButton, 8)
 
 local body = new("Frame", {
-    Position = UDim2.fromOffset(12, 75),
-    Size = UDim2.new(1, -24, 1, -122),
+    Position = UDim2.fromOffset(9, 55),
+    Size = UDim2.new(1, -18, 1, -88),
     BackgroundTransparency = 1,
 }, window)
 
@@ -315,18 +323,18 @@ local nav = new("ScrollingFrame", {
 round(nav, 12)
 stroke(nav, C.border, 1, 0.5)
 local navPadding = new("UIPadding", {
-    PaddingLeft = UDim.new(0, 8),
-    PaddingRight = UDim.new(0, 8),
-    PaddingTop = UDim.new(0, 8),
-    PaddingBottom = UDim.new(0, 8),
+    PaddingLeft = UDim.new(0, 5),
+    PaddingRight = UDim.new(0, 5),
+    PaddingTop = UDim.new(0, 5),
+    PaddingBottom = UDim.new(0, 5),
 }, nav)
-local navLayout = attachLayout(nav, Enum.FillDirection.Vertical, 6)
+local navLayout = attachLayout(nav, Enum.FillDirection.Vertical, 3)
 
 local content = new("ScrollingFrame", {
     Name = "Content",
     BackgroundColor3 = C.surface,
     BorderSizePixel = 0,
-    ScrollBarThickness = 4,
+    ScrollBarThickness = 3,
     ScrollBarImageColor3 = C.accent,
     ScrollingDirection = Enum.ScrollingDirection.Y,
     AutomaticCanvasSize = Enum.AutomaticSize.Y,
@@ -336,80 +344,64 @@ local content = new("ScrollingFrame", {
 round(content, 12)
 stroke(content, C.border, 1, 0.5)
 new("UIPadding", {
-    PaddingLeft = UDim.new(0, 12),
-    PaddingRight = UDim.new(0, 16),
-    PaddingTop = UDim.new(0, 12),
-    PaddingBottom = UDim.new(0, 14),
+    PaddingLeft = UDim.new(0, 8),
+    PaddingRight = UDim.new(0, 9),
+    PaddingTop = UDim.new(0, 7),
+    PaddingBottom = UDim.new(0, 8),
 }, content)
-attachLayout(content, Enum.FillDirection.Vertical, 9)
+attachLayout(content, Enum.FillDirection.Vertical, 5)
 
 local footer = new("Frame", {
-    Position = UDim2.new(0, 13, 1, -39),
-    Size = UDim2.new(1, -26, 0, 30),
+    Position = UDim2.new(0, 9, 1, -28),
+    Size = UDim2.new(1, -18, 0, 21),
     BackgroundColor3 = C.surface,
     BorderSizePixel = 0,
 }, window)
-round(footer, 8)
-local footerStatus = textLabel(footer, "●  UI ONLY   /   GAMEPLAY OFFLINE", 10, true, C.amber, {
-    Position = UDim2.fromOffset(10, 0),
-    Size = UDim2.new(0.65, -12, 1, 0),
+round(footer, 6)
+local footerStatus = textLabel(footer, "●  UI DEMO / FISHING OFFLINE", 9, true, C.amber, {
+    Position = UDim2.fromOffset(8, 0),
+    Size = UDim2.new(0.72, -8, 1, 0),
 })
-local footerTime = textLabel(footer, "Session 00:00", 10, false, C.muted, {
-    Position = UDim2.new(0.66, 0, 0, 0),
-    Size = UDim2.new(0.34, -10, 1, 0),
+local footerTime = textLabel(footer, "Session 00:00", 9, false, C.muted, {
+    Position = UDim2.new(0.72, 0, 0, 0),
+    Size = UDim2.new(0.28, -8, 1, 0),
     TextXAlignment = Enum.TextXAlignment.Right,
 })
 
 -- Floating launcher visible while the main hub is minimized.
 local launcher = textButton(screen, "KIMS", {
     Name = "KIMS_MiniLauncher",
-    Position = UDim2.new(1, -94, 0.52, 0),
-    Size = UDim2.fromOffset(76, 66),
+    Position = UDim2.new(1, -67, 0.55, 0),
+    Size = UDim2.fromOffset(53, 49),
     BackgroundColor3 = C.panel2,
     TextColor3 = C.white,
-    TextSize = 17,
+    TextSize = 13,
     Visible = false,
     ZIndex = 20,
 })
-round(launcher, 16)
+round(launcher, 11)
 stroke(launcher, C.accent, 2, 0)
-textLabel(launcher, "OPEN HUB", 9, true, C.cyan, {
-    Position = UDim2.new(0, 0, 1, -20),
-    Size = UDim2.new(1, 0, 0, 14),
+textLabel(launcher, "OPEN", 8, true, C.cyan, {
+    Position = UDim2.new(0, 0, 1, -16),
+    Size = UDim2.new(1, 0, 0, 11),
     TextXAlignment = Enum.TextXAlignment.Center,
     ZIndex = 21,
 })
 
-local toastBox = new("Frame", {
-    Name = "Toast",
-    AnchorPoint = Vector2.new(0.5, 1),
-    Position = UDim2.new(0.5, 0, 1, -54),
-    Size = UDim2.new(0.8, 0, 0, 46),
-    BackgroundColor3 = Color3.fromRGB(42, 28, 68),
-    Visible = false,
-    ZIndex = 50,
-    BorderSizePixel = 0,
-}, window)
-round(toastBox, 10)
-stroke(toastBox, C.accent, 1, 0)
-local toastText = textLabel(toastBox, "", 12, true, C.white, {
-    Position = UDim2.fromOffset(12, 4),
-    Size = UDim2.new(1, -24, 1, -8),
-    TextWrapped = true,
-    TextTruncate = Enum.TextTruncate.None,
-    TextXAlignment = Enum.TextXAlignment.Center,
-    ZIndex = 51,
-})
+-- Tiny non-obstructive status: display messages in the footer instead of
+-- placing an overlay across gameplay controls.
 local toastSerial = 0
+local defaultStatus = "●  UI DEMO / FISHING OFFLINE"
 local function toast(msg)
     if not active then return end
     toastSerial = toastSerial + 1
     local serial = toastSerial
-    toastText.Text = msg
-    toastBox.Visible = true
-    task.delay(3.3, function()
-        if active and serial == toastSerial then
-            toastBox.Visible = false
+    footerStatus.Text = "• " .. tostring(msg)
+    footerStatus.TextColor3 = C.cyan
+    task.delay(2.4, function()
+        if active and serial == toastSerial and footerStatus.Parent then
+            footerStatus.Text = defaultStatus
+            footerStatus.TextColor3 = C.amber
         end
     end)
 end
@@ -445,14 +437,14 @@ for _, spec in ipairs(tabs) do
     tabOrder = tabOrder + 1
     local button = textButton(nav, "  " .. spec.icon .. "    " .. spec.caption, {
         Name = "Tab_" .. spec.id,
-        Size = UDim2.new(1, 0, 0, 39),
+        Size = UDim2.new(1, 0, 0, 28),
         BackgroundColor3 = C.surface,
         TextColor3 = C.muted,
         TextXAlignment = Enum.TextXAlignment.Left,
         LayoutOrder = tabOrder,
-        TextSize = 12,
+        TextSize = 10,
     })
-    round(button, 9)
+    round(button, 7)
     stroke(button, C.border, 1, 1)
     navButtons[spec.id] = button
     track(button.MouseButton1Click:Connect(function()
@@ -476,64 +468,63 @@ local function card(height, color)
         BackgroundColor3 = color or C.panel,
         BorderSizePixel = 0,
     }, content)
-    round(frame, 11)
+    round(frame, 8)
     stroke(frame, C.border, 1, 0.45)
     return attachContent(frame)
 end
 
 local function sectionTitle(title, hint)
     local holder = new("Frame", {
-        Size = UDim2.new(1, -2, 0, hint and 46 or 29),
+        Size = UDim2.new(1, -2, 0, hint and 37 or 23),
         BackgroundTransparency = 1,
     }, content)
     attachContent(holder)
-    textLabel(holder, title, 17, true, C.white, {
-        Position = UDim2.fromOffset(2, 0), Size = UDim2.new(1, -4, 0, 25),
+    textLabel(holder, title, 14, true, C.white, {
+        Position = UDim2.fromOffset(2, 0), Size = UDim2.new(1, -4, 0, 20),
     })
     if hint then
-        textLabel(holder, hint, 11, false, C.muted, {
-            Position = UDim2.fromOffset(2, 26), Size = UDim2.new(1, -4, 0, 17),
+        textLabel(holder, hint, 9, false, C.muted, {
+            Position = UDim2.fromOffset(2, 20), Size = UDim2.new(1, -4, 0, 14),
         })
     end
 end
 
 local function banner(title, subtitle, status)
-    local frame = card(104, C.panel2)
+    local frame = card(69, C.panel2)
     local stripe = new("Frame", {
-        Position = UDim2.fromOffset(0, 0),
-        Size = UDim2.new(0, 4, 1, 0),
+        Size = UDim2.new(0, 3, 1, 0),
         BackgroundColor3 = C.accent,
         BorderSizePixel = 0,
     }, frame)
-    round(stripe, 3)
-    textLabel(frame, title, 20, true, C.white, {
-        Position = UDim2.fromOffset(16, 9), Size = UDim2.new(1, -30, 0, 28),
+    round(stripe, 2)
+    textLabel(frame, title, 16, true, C.white, {
+        Position = UDim2.fromOffset(10, 3), Size = UDim2.new(1, -19, 0, 21),
     })
-    textLabel(frame, subtitle, 11, false, C.muted, {
-        Position = UDim2.fromOffset(17, 38), Size = UDim2.new(1, -30, 0, 35),
+    textLabel(frame, subtitle, 10, false, C.muted, {
+        Position = UDim2.fromOffset(11, 24), Size = UDim2.new(1, -20, 0, 27),
         TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top,
         TextTruncate = Enum.TextTruncate.None,
     })
-    textLabel(frame, status or "V1 UI PREVIEW  •  Gameplay engine not installed", 10, true, C.amber, {
-        Position = UDim2.fromOffset(17, 80), Size = UDim2.new(1, -30, 0, 16),
+    textLabel(frame, status or "V2 UI DEMO  •  Fishing engine offline", 9, true, C.amber, {
+        Position = UDim2.fromOffset(11, 53), Size = UDim2.new(1, -20, 0, 12),
     })
 end
 
 local function toggleRow(title, subtitle, key)
-    local frame = card(68)
-    textLabel(frame, title, 14, true, C.white, {
-        Position = UDim2.fromOffset(13, 8), Size = UDim2.new(1, -111, 0, 24),
+    local frame = card(51)
+    textLabel(frame, title, 12, true, C.white, {
+        Position = UDim2.fromOffset(10, 5), Size = UDim2.new(1, -87, 0, 21),
     })
-    textLabel(frame, subtitle or "Demo toggle — not connected to game", 10, false, C.muted, {
-        Position = UDim2.fromOffset(14, 35), Size = UDim2.new(1, -110, 0, 20),
+    textLabel(frame, subtitle or "Demo only; no gameplay actions", 9, false, C.muted, {
+        Position = UDim2.fromOffset(10, 29), Size = UDim2.new(1, -86, 0, 15),
     })
     local button = textButton(frame, "", {
         AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -12, 0.5, 0),
-        Size = UDim2.fromOffset(84, 33),
-        TextSize = 10,
+        Position = UDim2.new(1, -8, 0.5, 0),
+        Size = UDim2.fromOffset(70, 27),
+        TextSize = 9,
     })
-    round(button, 17)
+    round(button, 14)
     local function paint()
         local checked = (state.previewToggles[key] == true)
         button.Text = checked and "ON · DEMO" or "OFF · DEMO"
@@ -550,24 +541,24 @@ end
 
 local function selectorRow(title, subtitle, key, options, onChanged)
     local viewport = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize) or Vector2.new(920, 570)
-    local narrow = viewport.X < 560
-    local frame = card(narrow and 110 or 70)
-    textLabel(frame, title, 13, true, C.white, {
-        Position = UDim2.fromOffset(12, 8),
-        Size = narrow and UDim2.new(1, -24, 0, 24) or UDim2.new(1, -190, 0, 25),
+    local narrow = viewport.X < 420
+    local frame = card(narrow and 84 or 52)
+    textLabel(frame, title, 12, true, C.white, {
+        Position = UDim2.fromOffset(10, 4),
+        Size = narrow and UDim2.new(1, -20, 0, 19) or UDim2.new(1, -140, 0, 21),
     })
-    textLabel(frame, subtitle or "Tap to cycle options", 10, false, C.muted, {
-        Position = UDim2.fromOffset(12, narrow and 30 or 36),
-        Size = narrow and UDim2.new(1, -24, 0, 19) or UDim2.new(1, -190, 0, 22),
+    textLabel(frame, subtitle or "Tap to cycle", 9, false, C.muted, {
+        Position = UDim2.fromOffset(10, narrow and 22 or 28),
+        Size = narrow and UDim2.new(1, -20, 0, 15) or UDim2.new(1, -140, 0, 16),
     })
     local selector = textButton(frame, "", {
         AnchorPoint = narrow and Vector2.new(0, 0) or Vector2.new(1, 0.5),
-        Position = narrow and UDim2.fromOffset(12, 58) or UDim2.new(1, -12, 0.5, 0),
-        Size = narrow and UDim2.new(1, -24, 0, 38) or UDim2.fromOffset(154, 37),
+        Position = narrow and UDim2.fromOffset(10, 45) or UDim2.new(1, -8, 0.5, 0),
+        Size = narrow and UDim2.new(1, -20, 0, 30) or UDim2.fromOffset(122, 30),
         BackgroundColor3 = C.surface,
-        TextSize = 11,
+        TextSize = 10,
     })
-    round(selector, 9)
+    round(selector, 7)
     stroke(selector, C.border, 1, 0.15)
     local function display()
         selector.Text = tostring(state.choices[key] or options[1]) .. "  >"
@@ -586,27 +577,27 @@ local function selectorRow(title, subtitle, key, options, onChanged)
         if onChanged then
             onChanged(state.choices[key])
         else
-            toast(title .. " selection is UI-only in V1.")
+            toast(title .. " is a UI preview.")
         end
     end))
 end
 
 local function actionButton(title, info, onPress)
-    local frame = card(61)
-    textLabel(frame, title, 13, true, C.white, {
-        Position = UDim2.fromOffset(13, 6), Size = UDim2.new(1, -121, 0, 25),
+    local frame = card(50)
+    textLabel(frame, title, 12, true, C.white, {
+        Position = UDim2.fromOffset(10, 4), Size = UDim2.new(1, -88, 0, 21),
     })
-    textLabel(frame, info or "Tap to preview", 10, false, C.muted, {
-        Position = UDim2.fromOffset(13, 34), Size = UDim2.new(1, -121, 0, 18),
+    textLabel(frame, info or "Tap to preview", 9, false, C.muted, {
+        Position = UDim2.fromOffset(10, 26), Size = UDim2.new(1, -88, 0, 17),
     })
     local button = textButton(frame, "RUN", {
         AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -12, 0.5, 0),
-        Size = UDim2.fromOffset(91, 35),
+        Position = UDim2.new(1, -8, 0.5, 0),
+        Size = UDim2.fromOffset(70, 28),
         BackgroundColor3 = C.panel2,
-        TextSize = 11,
+        TextSize = 10,
     })
-    round(button, 9)
+    round(button, 7)
     stroke(button, C.accent, 1, 0.1)
     trackContent(button.MouseButton1Click:Connect(function()
         if onPress then
@@ -618,18 +609,18 @@ local function actionButton(title, info, onPress)
 end
 
 local function infoRow(title, value, tint)
-    local frame = card(54)
-    textLabel(frame, title, 12, false, C.muted, {
-        Position = UDim2.fromOffset(13, 6), Size = UDim2.new(0.6, 0, 1, -12),
+    local frame = card(37)
+    textLabel(frame, title, 11, false, C.muted, {
+        Position = UDim2.fromOffset(10, 3), Size = UDim2.new(0.6, 0, 1, -6),
     })
-    local valueLabel = textLabel(frame, value, 13, true, tint or C.white, {
-        Position = UDim2.new(0.60, 0, 0, 6), Size = UDim2.new(0.40, -15, 1, -12),
+    local valueLabel = textLabel(frame, value, 11, true, tint or C.white, {
+        Position = UDim2.new(0.60, 0, 0, 3), Size = UDim2.new(0.40, -10, 1, -6),
         TextXAlignment = Enum.TextXAlignment.Right,
     })
     return valueLabel
 end
 
-local FILE_NAME = "KIMS_FISHIT_HUB_V1_config.json"
+local FILE_NAME = "KIMS_FISHIT_HUB_V2_config.json"
 local resizeWindow
 local function saveConfig()
     if type(writefile) ~= "function" then
@@ -637,7 +628,7 @@ local function saveConfig()
         return
     end
     local payload = {
-        version = 1,
+        version = 2,
         uiScale = state.uiScale,
         choices = state.choices,
         previewToggles = state.previewToggles,
@@ -660,8 +651,8 @@ local function loadConfig()
     local ok, parsed = pcall(function()
         return HttpService:JSONDecode(readfile(FILE_NAME))
     end)
-    if not ok or type(parsed) ~= "table" or parsed.version ~= 1 then
-        toast("No valid V1 UI configuration found.")
+    if not ok or type(parsed) ~= "table" or parsed.version ~= 2 then
+        toast("No valid V2 UI configuration found.")
         return
     end
     if type(parsed.choices) == "table" then
@@ -679,9 +670,9 @@ local function loadConfig()
             end
         end
     end
-    state.uiScale = math.clamp(tonumber(parsed.uiScale) or 1, 0.85, 1.10)
-    state.choices.uiScale = (state.uiScale < 0.95 and "85%") or
-                            (state.uiScale > 1.05 and "110%") or "100%"
+    state.uiScale = math.clamp(tonumber(parsed.uiScale) or 1, 0.80, 1.15)
+    state.choices.uiScale = (state.uiScale < 0.90 and "80%") or
+                            (state.uiScale > 1.07 and "115%") or "100%"
     resizeWindow()
     renderTab()
     toast("UI settings loaded. Gameplay is still offline.")
@@ -718,18 +709,18 @@ renderTab = function()
 
     if state.tab == "Fishing" then
         banner("Auto Fishing", "KIMS fishing engine control center. Interface ready for future integration.")
-        sectionTitle("Fishing Controls", "All gameplay controls are preview-only in V1")
+        sectionTitle("Fishing Controls", "Fishing controls are still UI-only")
         toggleRow("Enable Auto Fishing", "Preview toggle; no automatic casting", "autoFish")
         selectorRow("Fishing Mode", "Planned mode selection", "fishingMode", {"Precision", "Balanced", "Fast"})
         selectorRow("Cast Mode", "Planned cast behavior", "castMode", {"Normal", "Quick", "Adaptive"})
         toggleRow("Perfect Catch", "Not connected to any game mechanic", "perfectCatch")
         toggleRow("Auto Recast", "Not connected to casting", "autoRecast")
-        toggleRow("Stuck Recovery", "No game-state detection in V1", "stuckRecovery")
+        toggleRow("Stuck Recovery", "Game-state detection not connected", "stuckRecovery")
         sectionTitle("Rod & Bait")
         selectorRow("Rod Selection", "Interface preference only", "rod", {"Best Available", "Manual", "Favorite"})
         selectorRow("Bait Selection", "Interface preference only", "bait", {"Best Available", "Manual", "Favorite"})
     elseif state.tab == "Automation" then
-        banner("Smart Automation", "Plan your future automated workflows. No game actions run in V1.")
+        banner("Smart Automation", "Plan your future automated workflows. No game actions run in V2.")
         sectionTitle("Automation Suite")
         toggleRow("Auto Rejoin", "Reconnect logic not implemented", "autoRejoin")
         toggleRow("Anti Idle", "Does not send simulated inputs", "antiIdle")
@@ -753,14 +744,14 @@ renderTab = function()
         actionButton("Teleport to Waypoint", "Preview only; does not move your character")
         actionButton("Return to Previous Spot", "Planned location history")
     elseif state.tab == "Economy" then
-        banner("Economy Center", "Manage future selling rules while keeping your inventory untouched in V1.")
+        banner("Economy Center", "Manage future selling rules while keeping your inventory untouched in V2.")
         sectionTitle("Selling Rules")
         toggleRow("Auto Sell", "No inventory or shop integration", "autoSell")
         selectorRow("Sell Below Rarity", "Preview rule only", "sellRarity", {"Common", "Uncommon", "Rare", "Epic"})
         toggleRow("Inventory Warning", "Inventory detection not implemented", "inventoryWarning")
         actionButton("Sell Now", "Preview only; no fish will be sold")
     elseif state.tab == "Utility" then
-        banner("Utility Tools", "Helpful controls are planned for later versions; V1 remains UI-only.")
+        banner("Utility Tools", "Helpful controls are planned for later versions; V2 remains UI-only.")
         sectionTitle("Utilities")
         toggleRow("Performance Mode", "Does not edit Roblox graphics", "performanceMode")
         toggleRow("Session Reminder", "Reminder system not installed", "sessionReminder")
@@ -777,7 +768,7 @@ renderTab = function()
         infoRow("Remote script loading", "NONE", C.green)
         infoRow("External network calls", "NONE", C.green)
     elseif state.tab == "Stats" then
-        banner("Live Dashboard", "Only UI session duration and player identity are real in V1.")
+        banner("Live Dashboard", "Only UI session duration and player identity are real in V2.")
         sectionTitle("Your Session")
         infoRow("Player", player.Name, C.cyan)
         statsSessionValue = infoRow("Session duration", "00:00", C.green)
@@ -787,11 +778,11 @@ renderTab = function()
         infoRow("Coins earned", "N/A", C.amber)
         infoRow("Fishing engine", "NOT INSTALLED", C.amber)
     elseif state.tab == "Settings" then
-        banner("KIMS Settings", "Personalize and save the interface. These settings actually work in V1.",
+        banner("KIMS Settings", "Personalize and save the interface. These settings work in V2.",
             "WORKING: UI scale, save/load (where supported), reset, window controls")
         sectionTitle("Display Preferences")
-        selectorRow("Interface Scale", "Changes actual GUI zoom", "uiScale", {"85%", "100%", "110%"}, function(value)
-            local scaleByName = { ["85%"] = 0.85, ["100%"] = 1, ["110%"] = 1.10 }
+        selectorRow("Interface Scale", "Changes actual GUI zoom", "uiScale", {"80%", "100%", "115%"}, function(value)
+            local scaleByName = { ["80%"] = 0.80, ["100%"] = 1, ["115%"] = 1.15 }
             state.uiScale = scaleByName[value] or 1
             resizeWindow()
             toast("UI scale set to " .. value)
@@ -799,62 +790,74 @@ renderTab = function()
         sectionTitle("Configuration")
         actionButton("Save UI Configuration", "Uses executor writefile API when supported", saveConfig)
         actionButton("Load UI Configuration", "Uses executor readfile API when supported", loadConfig)
-        actionButton("Reset UI Configuration", "Restores the V1 interface defaults", resetConfig)
+        actionButton("Reset UI Configuration", "Restores the V2 interface defaults", resetConfig)
         sectionTitle("About")
         infoRow("Product", "KIMS FISHIT HUB", C.cyan)
-        infoRow("Version", "1.0.0 UI")
+        infoRow("Version", "2.0.0 MINI UI")
         infoRow("Game automation", "NOT INCLUDED", C.amber)
         infoRow("External dependencies", "NONE", C.green)
     end
 end
 
--- Responsive desktop / small-window Android layout.
+-- Compact landscape window; portrait phones use a horizontal nav strip.
 local mobileLayout = false
 resizeWindow = function()
     if not active then return end
     local currentCamera = workspace.CurrentCamera or camera
-    local viewport = (currentCamera and currentCamera.ViewportSize) or Vector2.new(900, 600)
+    local viewport = (currentCamera and currentCamera.ViewportSize) or Vector2.new(800, 500)
     if viewport.X < 100 or viewport.Y < 100 then
-        viewport = Vector2.new(900, 600)
+        viewport = Vector2.new(800, 500)
     end
 
     local scale = state.uiScale
     windowScale.Scale = scale
-    local w = math.floor(math.min(920, (viewport.X - 18) / scale))
-    local h = math.floor(math.min(570, (viewport.Y - 26) / scale))
-    window.Size = UDim2.fromOffset(math.max(260, w), math.max(260, h))
-    local mobile = viewport.X < 750
+    local w = math.floor(math.min(520, (viewport.X - 18) / scale))
+    local h = math.floor(math.min(355, (viewport.Y - 24) / scale))
+    window.Size = UDim2.fromOffset(math.max(265, w), math.max(225, h))
+    local mobile = viewport.X < 620
     mobileLayout = mobile
-    previewTag.Visible = not mobile
-    hubName.Visible = viewport.X >= 490
+    previewTag.Visible = viewport.X >= 740
+    hubName.Visible = viewport.X >= 380
     if mobile then
         nav.Position = UDim2.fromOffset(0, 0)
-        nav.Size = UDim2.new(1, 0, 0, 46)
+        nav.Size = UDim2.new(1, 0, 0, 37)
         nav.ScrollingDirection = Enum.ScrollingDirection.X
         nav.AutomaticCanvasSize = Enum.AutomaticSize.X
         navLayout.FillDirection = Enum.FillDirection.Horizontal
-        content.Position = UDim2.fromOffset(0, 54)
-        content.Size = UDim2.new(1, 0, 1, -54)
+        content.Position = UDim2.fromOffset(0, 43)
+        content.Size = UDim2.new(1, 0, 1, -43)
         for _, button in pairs(navButtons) do
-            button.Size = UDim2.fromOffset(122, 31)
-            button.TextSize = 11
+            button.Size = UDim2.fromOffset(100, 26)
+            button.TextSize = 10
         end
         footerTime.Visible = false
-        footerStatus.Size = UDim2.new(1, -20, 1, 0)
+        footerStatus.Size = UDim2.new(1, -16, 1, 0)
     else
         nav.Position = UDim2.fromOffset(0, 0)
-        nav.Size = UDim2.new(0, 161, 1, 0)
+        nav.Size = UDim2.new(0, 107, 1, 0)
         nav.ScrollingDirection = Enum.ScrollingDirection.Y
         nav.AutomaticCanvasSize = Enum.AutomaticSize.Y
         navLayout.FillDirection = Enum.FillDirection.Vertical
-        content.Position = UDim2.fromOffset(172, 0)
-        content.Size = UDim2.new(1, -172, 1, 0)
+        content.Position = UDim2.fromOffset(114, 0)
+        content.Size = UDim2.new(1, -114, 1, 0)
         for _, button in pairs(navButtons) do
-            button.Size = UDim2.new(1, 0, 0, 39)
-            button.TextSize = 12
+            button.Size = UDim2.new(1, 0, 0, 28)
+            button.TextSize = 10
         end
         footerTime.Visible = true
-        footerStatus.Size = UDim2.new(0.65, -12, 1, 0)
+        footerStatus.Size = UDim2.new(0.72, -8, 1, 0)
+    end
+    -- Return to a valid screen position if the display rotates or scale changes.
+    local effectiveW = window.Size.X.Offset * scale
+    local effectiveH = window.Size.Y.Offset * scale
+    local centerX = window.Position.X.Scale * viewport.X + window.Position.X.Offset
+    local centerY = window.Position.Y.Scale * viewport.Y + window.Position.Y.Offset
+    local marginX = math.min(effectiveW / 2 + 4, viewport.X / 2)
+    local marginY = math.min(effectiveH / 2 + 4, viewport.Y / 2)
+    local clampedX = math.clamp(centerX, marginX, math.max(marginX, viewport.X - marginX))
+    local clampedY = math.clamp(centerY, marginY, math.max(marginY, viewport.Y - marginY))
+    if clampedX == clampedX and clampedY == clampedY then
+        window.Position = UDim2.fromOffset(clampedX, clampedY)
     end
 end
 
@@ -885,10 +888,20 @@ local function makeDraggable(handle, target)
         if not dragging then return end
         if input.UserInputType == Enum.UserInputType.MouseMovement or input == dragInput then
             local delta = input.Position - startPos
-            target.Position = UDim2.new(
-                startGuiPos.X.Scale, startGuiPos.X.Offset + delta.X,
-                startGuiPos.Y.Scale, startGuiPos.Y.Offset + delta.Y
-            )
+            local currentCamera = workspace.CurrentCamera or camera
+            local viewport = currentCamera and currentCamera.ViewportSize or Vector2.new(800, 500)
+            local proposedX = startGuiPos.X.Scale * viewport.X + startGuiPos.X.Offset + delta.X
+            local proposedY = startGuiPos.Y.Scale * viewport.Y + startGuiPos.Y.Offset + delta.Y
+            local sizeX = target.AbsoluteSize.X
+            local sizeY = target.AbsoluteSize.Y
+            if target == window then
+                proposedX = math.clamp(proposedX, sizeX / 2 + 4, math.max(sizeX / 2 + 4, viewport.X - sizeX / 2 - 4))
+                proposedY = math.clamp(proposedY, sizeY / 2 + 4, math.max(sizeY / 2 + 4, viewport.Y - sizeY / 2 - 4))
+            else
+                proposedX = math.clamp(proposedX, 0, math.max(0, viewport.X - sizeX))
+                proposedY = math.clamp(proposedY, 0, math.max(0, viewport.Y - sizeY))
+            end
+            target.Position = UDim2.fromOffset(proposedX, proposedY)
         end
     end))
 end
@@ -934,5 +947,5 @@ end)
 resizeWindow()
 refreshNav()
 renderTab()
-toast("KIMS HUB V1 ready. This is a UI preview; gameplay features are offline.")
-print("[KIMS FISHIT HUB V1] UI loaded. Gameplay actions are not implemented.")
+toast("KIMS V2 MINI ready • fishing offline")
+print("[KIMS FISHIT HUB V2] Compact UI loaded; gameplay actions are not implemented.")
