@@ -1,754 +1,485 @@
+-- ====================================================================
+--         AUTO FISH V4.1 - CLEAN UI + EXTENDED ENGINES
+--         GitHub Ready Version
+-- ====================================================================
 
--- ==================================================
--- KIMS FISH IT | CUSTOM NEON UI | ENGINE TEST V1
--- UI REPLACEMENT FOR AUTO FISH V4.0
--- Existing engine functions are retained.
--- ==================================================
+local success, errorMsg = pcall(function()
+    local s = { game = game, workspace = workspace, Players = game:GetService("Players"),
+        ReplicatedStorage = game:GetService("ReplicatedStorage"),
+        HttpService = game:GetService("HttpService") }
+    for n, v in pairs(s) do if not v then error("Service missing: " .. n) end end
+    if not game:GetService("Players").LocalPlayer then error("LocalPlayer not available") end
+    return true
+end)
+if not success then error("❌ Dependency check failed: " .. tostring(errorMsg)) return end
 
-local UIS = game:GetService("UserInputService")
-local CoreGui = game:GetService("CoreGui")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local VirtualUser = game:GetService("VirtualUser")
+local TeleportService = game:GetService("TeleportService")
+local LocalPlayer = Players.LocalPlayer
 
-local C = {
-    bg = Color3.fromRGB(13, 12, 25),
-    panel = Color3.fromRGB(24, 21, 42),
-    card = Color3.fromRGB(35, 29, 55),
-    purple = Color3.fromRGB(150, 71, 255),
-    cyan = Color3.fromRGB(36, 216, 240),
-    orange = Color3.fromRGB(255, 158, 49),
-    green = Color3.fromRGB(48, 216, 139),
-    white = Color3.fromRGB(245, 241, 255),
-    muted = Color3.fromRGB(167, 157, 187)
+-- ====================================================================
+--                    CONFIG
+-- ====================================================================
+local CONFIG_FOLDER = "OptimizedAutoFish"
+local CONFIG_FILE = CONFIG_FOLDER .. "/config_" .. LocalPlayer.UserId .. ".json"
+
+local DefaultConfig = {
+    AutoFish = false, AutoSell = false, AutoCatch = false,
+    GPUSaver = false, BlatantMode = false, FishDelay = 0.9,
+    CatchDelay = 0.2, SellDelay = 30, TeleportLocation = "Sisyphus Statue",
+    AutoFavorite = true, FavoriteRarity = "Mythic",
+    Fullbright = false, WalkSpeed = 16, JumpPower = 50
 }
+local Config = {}
+for k, v in pairs(DefaultConfig) do Config[k] = v end
 
-local function make(kind, props, parent)
-    local obj = Instance.new(kind)
-    for k, v in pairs(props or {}) do
-        obj[k] = v
-    end
-    obj.Parent = parent
-    return obj
+local LOCATIONS = {
+    ["Spawn"] = CFrame.new(45.2788086, 252.562927, 2987.10913),
+    ["Sisyphus Statue"] = CFrame.new(-3728.21606, -135.074417, -1012.12744),
+    ["Coral Reefs"] = CFrame.new(-3114.78198, 1.32066584, 2237.52295),
+    ["Esoteric Depths"] = CFrame.new(3248.37109, -1301.53027, 1403.82727),
+    ["Crater Island"] = CFrame.new(1016.49072, 20.0919304, 5069.27295),
+    ["Lost Isle"] = CFrame.new(-3618.15698, 240.836655, -1317.45801),
+    ["Weather Machine"] = CFrame.new(-1488.51196, 83.1732635, 1876.30298),
+    ["Tropical Grove"] = CFrame.new(-2095.34106, 197.199997, 3718.08008),
+    ["Mount Hallow"] = CFrame.new(2136.62305, 78.9163895, 3272.50439),
+    ["Treasure Room"] = CFrame.new(-3606.34985, -266.57373, -1580.97339),
+    ["Kohana"] = CFrame.new(-663.904236, 3.04580712, 718.796875),
+    ["Underground Cellar"] = CFrame.new(2109.52148, -94.1875076, -708.609131),
+    ["Ancient Jungle"] = CFrame.new(1831.71362, 6.62499952, -299.279175),
+    ["Sacred Temple"] = CFrame.new(1466.92151, -21.8750591, -622.835693)
+}
+local locationNames = {}
+for name, _ in pairs(LOCATIONS) do table.insert(locationNames, name) end
+table.sort(locationNames)
+
+-- ====================================================================
+--                    CONFIG SAVE/LOAD
+-- ====================================================================
+local function ensureFolder()
+    if not isfolder or not makefolder then return false end
+    if not isfolder(CONFIG_FOLDER) then pcall(function() makefolder(CONFIG_FOLDER) end) end
+    return isfolder(CONFIG_FOLDER)
+end
+local function saveConfig()
+    if not writefile or not ensureFolder() then return end
+    pcall(function() writefile(CONFIG_FILE, HttpService:JSONEncode(Config)) end)
+end
+local function loadConfig()
+    if not readfile or not isfile or not isfile(CONFIG_FILE) then return end
+    pcall(function()
+        local data = HttpService:JSONDecode(readfile(CONFIG_FILE))
+        for k, v in pairs(data) do if DefaultConfig[k] ~= nil then Config[k] = v end end
+    end)
+end
+loadConfig()
+
+-- ====================================================================
+--                    NETWORK EVENTS
+-- ====================================================================
+local Events = {}
+do
+    local net = ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net
+    Events.fishing = net:WaitForChild("RE/FishingCompleted")
+    Events.sell = net:WaitForChild("RF/SellAllItems")
+    Events.charge = net:WaitForChild("RF/ChargeFishingRod")
+    Events.minigame = net:WaitForChild("RF/RequestFishingMinigameStarted")
+    Events.equip = net:WaitForChild("RE/EquipToolFromHotbar")
+    Events.unequip = net:WaitForChild("RE/UnequipToolFromHotbar")
+    Events.favorite = net:WaitForChild("RE/FavoriteItem")
 end
 
-local function corner(obj, radius)
-    make("UICorner", {
-        CornerRadius = UDim.new(0, radius or 9)
-    }, obj)
+-- ====================================================================
+--                    MODULES & RARITY
+-- ====================================================================
+local ItemUtility = require(ReplicatedStorage.Shared.ItemUtility)
+local Replion = require(ReplicatedStorage.Packages.Replion)
+local PlayerData = Replion.Client:WaitReplion("Data")
+
+local RarityTiers = { Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Mythic = 6, Secret = 7 }
+local function getRarityValue(r) return RarityTiers[r] or 0 end
+local function getFishRarity(d) if not d or not d.Data then return "Common" end return d.Data.Rarity or "Common" end
+
+-- ====================================================================
+--                    TELEPORT (ISLAND)
+-- ====================================================================
+local function teleportTo(name)
+    local cf = LOCATIONS[name]
+    if not cf then return false end
+    return pcall(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if root then root.CFrame = cf end
+    end)
 end
 
-local function outline(obj, color)
-    make("UIStroke", {
-        Color = color or C.purple,
-        Thickness = 1,
-        Transparency = 0.35
-    }, obj)
-end
-
-local function label(parent, text, size, color)
-    return make("TextLabel", {
-        BackgroundTransparency = 1,
-        Text = text,
-        TextColor3 = color or C.white,
-        Font = Enum.Font.Gotham,
-        TextSize = size or 13,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextWrapped = true
-    }, parent)
-end
-
--- GUI ROOT
-local old = CoreGui:FindFirstChild("KIMS_FISH_IT")
-if old then old:Destroy() end
-
-local gui = make("ScreenGui", {
-    Name = "KIMS_FISH_IT",
-    ResetOnSpawn = false,
-    IgnoreGuiInset = true,
-    DisplayOrder = 1000000
-}, nil)
-
-local okParent = pcall(function()
-    gui.Parent = CoreGui
-end)
-
-if not okParent then
-    gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-end
-
-local window = make("Frame", {
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(0.5, 0.5),
-    Size = UDim2.fromOffset(780, 500),
-    BackgroundColor3 = C.bg,
-    BorderSizePixel = 0,
-    Active = true
-}, gui)
-corner(window, 16)
-outline(window, C.purple)
-
-local scale = make("UIScale", {Scale = 1}, window)
-
-local function resizeUI()
-    local camera = workspace.CurrentCamera
-    if not camera then return end
-    local v = camera.ViewportSize
-    scale.Scale = math.min(
-        1,
-        math.max(0.4, (v.X - 20) / 780)
-    )
-    scale.Scale = math.min(
-        scale.Scale,
-        math.max(0.4, (v.Y - 20) / 500)
-    )
-end
-resizeUI()
-
--- HEADER
-local header = make("Frame", {
-    Size = UDim2.new(1, 0, 0, 65),
-    BackgroundColor3 = C.panel,
-    BorderSizePixel = 0
-}, window)
-corner(header, 14)
-
-local logo = label(header, "⚡ KIMS", 27, C.white)
-logo.Font = Enum.Font.GothamBold
-logo.Position = UDim2.fromOffset(18, 5)
-logo.Size = UDim2.fromOffset(175, 35)
-
-local subtitle = label(header, "FISH IT  •  ENGINE TEST V1", 10, C.cyan)
-subtitle.Position = UDim2.fromOffset(20, 39)
-subtitle.Size = UDim2.fromOffset(250, 15)
-
-local headerInfo = label(
-    header, "KIMS SCRIPT  |  NEON EDITION", 12, C.muted
-)
-headerInfo.Position = UDim2.fromOffset(300, 21)
-headerInfo.Size = UDim2.fromOffset(340, 25)
-
-local close = make("TextButton", {
-    Text = "✕",
-    Font = Enum.Font.GothamBold,
-    TextSize = 21,
-    TextColor3 = C.orange,
-    BackgroundTransparency = 1,
-    Position = UDim2.new(1, -45, 0, 13),
-    Size = UDim2.fromOffset(34, 36)
-}, header)
-
--- FLOATING REOPEN BUTTON
-local floating = make("TextButton", {
-    Text = "⚡ KIMS",
-    Font = Enum.Font.GothamBold,
-    TextSize = 16,
-    TextColor3 = C.white,
-    BackgroundColor3 = C.panel,
-    Position = UDim2.fromScale(0.03, 0.55),
-    Size = UDim2.fromOffset(110, 43),
-    Visible = false
-}, gui)
-corner(floating, 12)
-outline(floating, C.purple)
-
-close.Activated:Connect(function()
-    window.Visible = false
-    floating.Visible = true
-end)
-
-floating.Activated:Connect(function()
-    window.Visible = true
-    floating.Visible = false
-end)
-
--- DRAG WINDOW
-local dragging = false
-local dragStart, startPos
-
-header.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = window.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
+-- ====================================================================
+--                    TELEPORT TO PLAYER
+-- ====================================================================
+local function teleportToPlayer(playerName)
+    return pcall(function()
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr.Name == playerName and plr ~= LocalPlayer then
+                local targetChar = plr.Character
+                local myChar = LocalPlayer.Character
+                if targetChar and myChar then
+                    local tRoot = targetChar:FindFirstChild("HumanoidRootPart")
+                    local mRoot = myChar:FindFirstChild("HumanoidRootPart")
+                    if tRoot and mRoot then
+                        mRoot.CFrame = tRoot.CFrame + Vector3.new(0, 3, 0)
+                    end
+                end
+                return
             end
-        end)
-    end
-end)
-
-UIS.InputChanged:Connect(function(input)
-    if not dragging then return end
-    if input.UserInputType ~= Enum.UserInputType.MouseMovement
-        and input.UserInputType ~= Enum.UserInputType.Touch then
-        return
-    end
-    local d = (input.Position - dragStart) / scale.Scale
-    window.Position = UDim2.new(
-        startPos.X.Scale, startPos.X.Offset + d.X,
-        startPos.Y.Scale, startPos.Y.Offset + d.Y
-    )
-end)
-
--- SIDEBAR
-local sidebar = make("Frame", {
-    Position = UDim2.fromOffset(12, 75),
-    Size = UDim2.new(0, 184, 1, -88),
-    BackgroundColor3 = C.panel,
-    BorderSizePixel = 0
-}, window)
-corner(sidebar, 12)
-
-local search = make("TextBox", {
-    Position = UDim2.fromOffset(9, 10),
-    Size = UDim2.new(1, -18, 0, 37),
-    BackgroundColor3 = C.card,
-    TextColor3 = C.white,
-    PlaceholderText = "Search features...",
-    PlaceholderColor3 = C.muted,
-    Text = "",
-    TextSize = 12,
-    Font = Enum.Font.Gotham,
-    ClearTextOnFocus = false
-}, sidebar)
-corner(search, 9)
-
-local nav = make("ScrollingFrame", {
-    Position = UDim2.fromOffset(8, 56),
-    Size = UDim2.new(1, -16, 1, -66),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    ScrollBarThickness = 2,
-    CanvasSize = UDim2.fromOffset(0, 0)
-}, sidebar)
-
-local navLayout = make("UIListLayout", {
-    Padding = UDim.new(0, 7)
-}, nav)
-
-navLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    nav.CanvasSize = UDim2.fromOffset(
-        0, navLayout.AbsoluteContentSize.Y + 10
-    )
-end)
-
--- CONTENT
-local title = label(window, "Teleport", 27, C.white)
-title.Font = Enum.Font.GothamBold
-title.Position = UDim2.fromOffset(220, 83)
-title.Size = UDim2.fromOffset(530, 35)
-
-local subtitlePage = label(
-    window, "KIMS Fish It", 12, C.muted
-)
-subtitlePage.Position = UDim2.fromOffset(221, 119)
-subtitlePage.Size = UDim2.fromOffset(520, 22)
-
-local scroll = make("ScrollingFrame", {
-    Position = UDim2.fromOffset(214, 154),
-    Size = UDim2.new(1, -227, 1, -202),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    ScrollBarThickness = 3,
-    ScrollBarImageColor3 = C.purple,
-    CanvasSize = UDim2.fromOffset(0, 0)
-}, window)
-
-local layout = make("UIListLayout", {
-    Padding = UDim.new(0, 9),
-    SortOrder = Enum.SortOrder.LayoutOrder
-}, scroll)
-
-layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    scroll.CanvasSize = UDim2.fromOffset(
-        0, layout.AbsoluteContentSize.Y + 15
-    )
-end)
-
-local status = label(window, "● ENGINE NOT YET VERIFIED", 11, C.orange)
-status.Position = UDim2.new(0, 220, 1, -35)
-status.Size = UDim2.new(1, -238, 0, 24)
-
-local function setStatus(text, color)
-    status.Text = "● " .. text
-    status.TextColor3 = color or C.cyan
-    print("[KIMS] " .. text)
-end
-
-local order = 0
-local function addOrder(obj)
-    order = order + 1
-    obj.LayoutOrder = order
-    return obj
-end
-
-local function section(text)
-    local t = addOrder(label(scroll, text, 15, C.cyan))
-    t.Font = Enum.Font.GothamBold
-    t.Size = UDim2.new(1, -8, 0, 31)
-end
-
-local function info(text, accent)
-    local t = addOrder(make("TextLabel", {
-        Size = UDim2.new(1, -8, 0, 54),
-        BackgroundColor3 = C.card,
-        BorderSizePixel = 0,
-        Text = "   " .. text,
-        Font = Enum.Font.Gotham,
-        TextSize = 12,
-        TextColor3 = accent or C.muted,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextWrapped = true
-    }, scroll))
-    corner(t, 9)
-    return t
-end
-
-local function button(text, callback, color)
-    local b = addOrder(make("TextButton", {
-        Size = UDim2.new(1, -8, 0, 42),
-        BackgroundColor3 = color or C.purple,
-        BorderSizePixel = 0,
-        Text = text,
-        Font = Enum.Font.GothamBold,
-        TextSize = 13,
-        TextColor3 = C.white
-    }, scroll))
-    corner(b, 9)
-    b.Activated:Connect(callback)
-    return b
-end
-
-local function toggle(text, initial, callback)
-    local value = initial
-    local row = addOrder(make("Frame", {
-        Size = UDim2.new(1, -8, 0, 48),
-        BackgroundColor3 = C.card,
-        BorderSizePixel = 0
-    }, scroll))
-    corner(row, 9)
-
-    local name = label(row, text, 12, C.white)
-    name.Position = UDim2.fromOffset(13, 7)
-    name.Size = UDim2.new(1, -105, 0, 34)
-
-    local b = make("TextButton", {
-        Position = UDim2.new(1, -83, 0.5, -15),
-        Size = UDim2.fromOffset(70, 30),
-        Font = Enum.Font.GothamBold,
-        TextSize = 12,
-        TextColor3 = C.white
-    }, row)
-    corner(b, 8)
-
-    local function draw()
-        b.Text = value and "ON" or "OFF"
-        b.BackgroundColor3 = value and C.purple or C.bg
-    end
-
-    draw()
-    b.Activated:Connect(function()
-        value = not value
-        draw()
-        callback(value)
-    end)
-end
-
-local function numberInput(text, current, minimum, maximum, callback)
-    local row = addOrder(make("Frame", {
-        Size = UDim2.new(1, -8, 0, 47),
-        BackgroundColor3 = C.card,
-        BorderSizePixel = 0
-    }, scroll))
-    corner(row, 9)
-
-    local name = label(row, text, 12, C.white)
-    name.Position = UDim2.fromOffset(12, 7)
-    name.Size = UDim2.new(1, -128, 0, 32)
-
-    local input = make("TextBox", {
-        Position = UDim2.new(1, -108, 0, 7),
-        Size = UDim2.fromOffset(95, 33),
-        Text = tostring(current),
-        Font = Enum.Font.Gotham,
-        TextSize = 13,
-        TextColor3 = C.white,
-        BackgroundColor3 = C.bg,
-        ClearTextOnFocus = false
-    }, row)
-    corner(input, 7)
-
-    input.FocusLost:Connect(function()
-        local n = tonumber(input.Text)
-        if n and n >= minimum and n <= maximum then
-            callback(n)
-            setStatus(text .. " = " .. tostring(n))
-        else
-            input.Text = tostring(current)
-            setStatus("Invalid " .. text, C.orange)
         end
     end)
 end
 
-local function selector(text, options, initial, callback)
-    local selected = initial
-    local expanded = false
-
-    local box = addOrder(make("Frame", {
-        Size = UDim2.new(1, -8, 0, 47),
-        BackgroundTransparency = 1,
-        ClipsDescendants = true
-    }, scroll))
-
-    local pick = make("TextButton", {
-        Size = UDim2.new(1, 0, 0, 43),
-        BackgroundColor3 = C.card,
-        TextColor3 = C.white,
-        TextSize = 12,
-        Font = Enum.Font.GothamBold,
-        Text = text .. ": " .. selected .. "  ▼"
-    }, box)
-    corner(pick, 8)
-
-    local choices = make("Frame", {
-        Position = UDim2.fromOffset(0, 45),
-        Size = UDim2.new(1, 0, 0, #options * 33),
-        BackgroundTransparency = 1,
-        Visible = false
-    }, box)
-
-    local function collapse()
-        expanded = false
-        choices.Visible = false
-        box.Size = UDim2.new(1, -8, 0, 47)
-    end
-
-    for i, option in ipairs(options) do
-        local optionButton = make("TextButton", {
-            Position = UDim2.fromOffset(0, (i - 1) * 33),
-            Size = UDim2.new(1, 0, 0, 31),
-            BackgroundColor3 = C.panel,
-            TextColor3 = C.white,
-            Font = Enum.Font.Gotham,
-            TextSize = 12,
-            Text = option
-        }, choices)
-        corner(optionButton, 6)
-
-        optionButton.Activated:Connect(function()
-            selected = option
-            pick.Text = text .. ": " .. selected .. "  ▼"
-            collapse()
-            callback(selected)
-        end)
-    end
-
-    pick.Activated:Connect(function()
-        expanded = not expanded
-        choices.Visible = expanded
-        box.Size = UDim2.new(
-            1, -8, 0,
-            expanded and (49 + #options * 33) or 47
-        )
+-- ====================================================================
+--                    SERVER HOP & REJOIN
+-- ====================================================================
+local function serverHop()
+    pcall(function()
+        local url = "https://games.roblox.com/v1/games/" .. game.PlaceId
+            .. "/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true"
+        local result = HttpService:JSONDecode(game:HttpGet(url))
+        if result and result.data then
+            for _, srv in ipairs(result.data) do
+                if srv.id ~= game.JobId and srv.playing < srv.maxPlayers then
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, srv.id, LocalPlayer)
+                    return
+                end
+            end
+        end
     end)
 end
 
-local function missing(text)
-    local b = button("🔒 " .. text .. "  |  NO ENGINE", function()
-        setStatus(text .. ": Engine not available", C.orange)
-    end, C.orange)
-    b.TextColor3 = C.bg
-end
-
--- ENGINE CONTROLS
-local function updateConfig(key, value)
-    Config[key] = value
-    saveConfig()
-    setStatus(key .. " updated")
-end
-
-local function controlFishing(enabled)
-    if enabled and not fishingActive then
-        Config.AutoFish = true
-        fishingActive = true
-        task.spawn(fishingLoop)
-    elseif not enabled then
-        Config.AutoFish = false
-        fishingActive = false
-        pcall(function()
-            Events.unequip:FireServer()
-        end)
-    end
-
-    saveConfig()
-    setStatus(
-        enabled and "Auto Fish enabled (testing)"
-            or "Auto Fish stopped",
-        enabled and C.green or C.orange
-    )
-end
-
--- PAGE NAVIGATION
-local pages = {
-    {"Main", "⌂", true},
-    {"Favorite", "★", true},
-    {"Teleport", "◆", true},
-    {"Shop", "▣", false},
-    {"Automation", "⚡", true},
-    {"Trade", "⇄", false},
-    {"Webhook", "◈", false},
-    {"Stats", "▥", false}
-}
-
-local activePage = "Teleport"
-local navButtons = {}
-local render
-
-for _, entry in ipairs(pages) do
-    local pageName, icon, ready = entry[1], entry[2], entry[3]
-
-    local b = make("TextButton", {
-        Size = UDim2.new(1, -3, 0, 44),
-        BackgroundColor3 = C.card,
-        Text = icon .. "  " .. pageName,
-        TextSize = 13,
-        Font = Enum.Font.GothamBold,
-        TextColor3 = ready and C.white or C.orange,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        BorderSizePixel = 0
-    }, nav)
-    corner(b, 9)
-
-    make("UIPadding", {
-        PaddingLeft = UDim.new(0, 12)
-    }, b)
-
-    navButtons[pageName] = {
-        button = b,
-        ready = ready
-    }
-
-    b.Activated:Connect(function()
-        activePage = pageName
-        render()
+local function rejoin()
+    pcall(function()
+        TeleportService:Teleport(game.PlaceId, LocalPlayer)
     end)
 end
 
-search:GetPropertyChangedSignal("Text"):Connect(function()
-    local q = string.lower(search.Text)
-    for name, data in pairs(navButtons) do
-        data.button.Visible =
-            string.find(string.lower(name), q, 1, true) ~= nil
+-- ====================================================================
+--                    GPU SAVER
+-- ====================================================================
+local gpuActive = false
+local gpuGui = nil
+local function enableGPU()
+    if gpuActive then return end
+    gpuActive = true
+    pcall(function()
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        game.Lighting.GlobalShadows = false
+        game.Lighting.FogEnd = 1
+        setfpscap(8)
+    end)
+    gpuGui = Instance.new("ScreenGui")
+    gpuGui.ResetOnSpawn = false
+    gpuGui.DisplayOrder = 999999
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 1, 0)
+    f.BackgroundColor3 = Color3.new(0.1, 0.1, 0.1)
+    f.Parent = gpuGui
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(0, 400, 0, 80)
+    l.Position = UDim2.new(0.5, -200, 0.5, -40)
+    l.BackgroundTransparency = 1
+    l.Text = "🟢 GPU SAVER ACTIVE"
+    l.TextColor3 = Color3.new(0, 1, 0)
+    l.TextSize = 28
+    l.Font = Enum.Font.GothamBold
+    l.Parent = f
+    gpuGui.Parent = game.CoreGui
+end
+local function disableGPU()
+    if not gpuActive then return end
+    gpuActive = false
+    pcall(function()
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic
+        game.Lighting.GlobalShadows = true
+        game.Lighting.FogEnd = 100000
+        setfpscap(0)
+    end)
+    if gpuGui then gpuGui:Destroy(); gpuGui = nil end
+end
+
+-- ====================================================================
+--                    FULLBRIGHT
+-- ====================================================================
+local function setFullbright(state)
+    if state then
+        game.Lighting.Ambient = Color3.fromRGB(178, 178, 178)
+        game.Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+        game.Lighting.Brightness = 2
+        game.Lighting.ClockTime = 12
+        game.Lighting.FogEnd = 100000
+    else
+        game.Lighting.Ambient = Color3.fromRGB(70, 70, 70)
+        game.Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+        game.Lighting.Brightness = 1
+    end
+end
+
+-- ====================================================================
+--                    WALKSPEED & JUMPPOWER
+-- ====================================================================
+local function applySpeed(value)
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = value end
+    end
+end
+local function applyJump(value)
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.UseJumpPower = true; hum.JumpPower = value end
+    end
+end
+
+-- Anti-AFK
+LocalPlayer.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+end)
+
+-- ====================================================================
+--                    AUTO FAVORITE
+-- ====================================================================
+local favoritedItems = {}
+local function isItemFavorited(uuid)
+    local ok, res = pcall(function()
+        for _, it in ipairs(PlayerData:GetExpect("Inventory").Items) do
+            if it.UUID == uuid then return it.Favorited == true end
+        end
+        return false
+    end)
+    return ok and res or false
+end
+local function autoFavoriteByRarity()
+    if not Config.AutoFavorite then return end
+    local target = getRarityValue(Config.FavoriteRarity)
+    if target < 6 then target = 6 end
+    pcall(function()
+        local items = PlayerData:GetExpect("Inventory").Items
+        if not items or #items == 0 then return end
+        for _, item in ipairs(items) do
+            local data = ItemUtility:GetItemData(item.Id)
+            if data and data.Data then
+                if getRarityValue(getFishRarity(data)) >= target then
+                    if not isItemFavorited(item.UUID) and not favoritedItems[item.UUID] then
+                        Events.favorite:FireServer(item.UUID)
+                        favoritedItems[item.UUID] = true
+                        task.wait(0.3)
+                    end
+                end
+            end
+        end
+    end)
+end
+task.spawn(function()
+    while true do task.wait(10); if Config.AutoFavorite then autoFavoriteByRarity() end end
+end)
+
+-- ====================================================================
+--                    FISHING LOGIC
+-- ====================================================================
+local isFishing = false
+local fishingActive = false
+
+local function castRod()
+    pcall(function()
+        Events.equip:FireServer(1)
+        task.wait(0.05)
+        Events.charge:InvokeServer(1755848498.4834)
+        task.wait(0.02)
+        Events.minigame:InvokeServer(1.2854545116425, 1)
+    end)
+end
+local function reelIn() pcall(function() Events.fishing:FireServer() end) end
+
+local function blatantLoop()
+    while fishingActive and Config.BlatantMode do
+        if not isFishing then
+            isFishing = true
+            pcall(function()
+                Events.equip:FireServer(1)
+                task.wait(0.01)
+                task.spawn(function()
+                    Events.charge:InvokeServer(1755848498.4834)
+                    task.wait(0.01)
+                    Events.minigame:InvokeServer(1.2854545116425, 1)
+                end)
+                task.wait(0.05)
+                task.spawn(function()
+                    Events.charge:InvokeServer(1755848498.4834)
+                    task.wait(0.01)
+                    Events.minigame:InvokeServer(1.2854545116425, 1)
+                end)
+            end)
+            task.wait(Config.FishDelay)
+            for _ = 1, 5 do pcall(function() Events.fishing:FireServer() end) task.wait(0.01) end
+            task.wait(Config.CatchDelay * 0.5)
+            isFishing = false
+        else task.wait(0.01) end
+    end
+end
+
+local function normalLoop()
+    while fishingActive and not Config.BlatantMode do
+        if not isFishing then
+            isFishing = true
+            castRod(); task.wait(Config.FishDelay)
+            reelIn();  task.wait(Config.CatchDelay)
+            isFishing = false
+        else task.wait(0.1) end
+    end
+end
+
+local function fishingLoop()
+    while fishingActive do
+        if Config.BlatantMode then blatantLoop() else normalLoop() end
+        task.wait(0.1)
+    end
+end
+
+task.spawn(function()
+    while true do
+        if Config.AutoCatch and not isFishing then pcall(function() Events.fishing:FireServer() end) end
+        task.wait(Config.CatchDelay)
     end
 end)
 
--- PAGE CONTENT
-render = function()
-    for _, obj in ipairs(scroll:GetChildren()) do
-        if obj ~= layout then obj:Destroy() end
+local function simpleSell() pcall(function() Events.sell:InvokeServer() end) end
+task.spawn(function()
+    while true do task.wait(Config.SellDelay); if Config.AutoSell then simpleSell() end end
+end)
+
+-- ====================================================================
+--                    RAYFIELD UI
+-- ====================================================================
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+    Name = "🎣 Auto Fish V4.1",
+    LoadingTitle = "Auto Fish V4.1",
+    LoadingSubtitle = "Clean UI + Extended Engines",
+    ConfigurationSaving = { Enabled = false }
+})
+
+-- ============== TAB 1: MAIN ==============
+local MainTab = Window:CreateTab("🏠 Main", nil)
+MainTab:CreateSection("Auto Fishing")
+
+MainTab:CreateToggle({Name = "⚡ Blatant Mode (3x Faster)", CurrentValue = Config.BlatantMode,
+    Callback = function(v) Config.BlatantMode = v; saveConfig() end})
+
+MainTab:CreateToggle({Name = "🤖 Auto Fish", CurrentValue = Config.AutoFish,
+    Callback = function(v)
+        Config.AutoFish = v; fishingActive = v
+        if v then task.spawn(fishingLoop) else pcall(function() Events.unequip:FireServer() end) end
+        saveConfig()
+    end})
+
+MainTab:CreateToggle({Name = "🎯 Auto Catch", CurrentValue = Config.AutoCatch,
+    Callback = function(v) Config.AutoCatch = v; saveConfig() end})
+
+MainTab:CreateInput({Name = "Fish Delay (s)", PlaceholderText = "0.9",
+    CurrentValue = tostring(Config.FishDelay), RemoveTextAfterFocusLost = false,
+    Callback = function(v) local n = tonumber(v); if n and n >= 0.1 and n <= 10 then Config.FishDelay = n; saveConfig() end end})
+
+MainTab:CreateInput({Name = "Catch Delay (s)", PlaceholderText = "0.2",
+    CurrentValue = tostring(Config.CatchDelay), RemoveTextAfterFocusLost = false,
+    Callback = function(v) local n = tonumber(v); if n and n >= 0.1 and n <= 10 then Config.CatchDelay = n; saveConfig() end end})
+
+MainTab:CreateSection("Auto Sell")
+MainTab:CreateToggle({Name = "💰 Auto Sell (Keep Favorited)", CurrentValue = Config.AutoSell,
+    Callback = function(v) Config.AutoSell = v; saveConfig() end})
+MainTab:CreateInput({Name = "Sell Delay (s)", PlaceholderText = "30",
+    CurrentValue = tostring(Config.SellDelay), RemoveTextAfterFocusLost = false,
+    Callback = function(v) local n = tonumber(v); if n and n >= 10 and n <= 300 then Config.SellDelay = n; saveConfig() end end})
+MainTab:CreateButton({Name = "💰 Sell All Now", Callback = function() simpleSell() end})
+
+-- ============== TAB 2: FAVORITE ==============
+local FavTab = Window:CreateTab("⭐ Favorite", nil)
+FavTab:CreateSection("Auto Favorite Fish")
+FavTab:CreateToggle({Name = "⭐ Auto Favorite", CurrentValue = Config.AutoFavorite,
+    Callback = function(v) Config.AutoFavorite = v; saveConfig() end})
+FavTab:CreateDropdown({Name = "Favorite Rarity", Options = { "Mythic", "Secret" },
+    CurrentOption = { Config.FavoriteRarity },
+    Callback = function(opt) Config.FavoriteRarity = opt; saveConfig() end})
+FavTab:CreateButton({Name = "⭐ Favorite Now", Callback = function() autoFavoriteByRarity() end})
+
+-- ============== TAB 3: TELEPORT ==============
+local TPTab = Window:CreateTab("🌍 Teleport", nil)
+TPTab:CreateSection("📍 Teleport to Island")
+local currentIsland = Config.TeleportLocation
+if not LOCATIONS[currentIsland] then currentIsland = locationNames[1] end
+TPTab:CreateDropdown({Name = "Select Island", Options = locationNames,
+    CurrentOption = { currentIsland },
+    Callback = function(opt) Config.TeleportLocation = opt; saveConfig() end})
+TPTab:CreateButton({Name = "🚀 Teleport to Island", Callback = function() teleportTo(Config.TeleportLocation) end})
+
+TPTab:CreateSection("👤 Teleport to Player")
+local function getPlayerList()
+    local list = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then table.insert(list, plr.Name) end
     end
-    order = 0
-    scroll.CanvasPosition = Vector2.new(0, 0)
-
-    for name, data in pairs(navButtons) do
-        local selected = (name == activePage)
-        data.button.BackgroundColor3 =
-            selected and C.purple or C.card
-        data.button.TextColor3 =
-            selected and C.white or
-            (data.ready and C.white or C.orange)
-    end
-
-    title.Text = activePage
-    subtitlePage.Text =
-        "KIMS FISH IT  •  " ..
-        (navButtons[activePage].ready and
-         "ENGINE AVAILABLE - UNVERIFIED" or
-         "ENGINE MISSING / PARTIAL")
-
-    if activePage == "Main" then
-        section("KIMS ENGINE DASHBOARD")
-        info("Player: " .. LocalPlayer.Name)
-        info("Auto Fish: " ..
-            (fishingActive and "RUNNING" or "STOPPED"))
-        info("Fishing engine detected in source. Game compatibility is not verified.")
-
-        section("Quick Controls")
-        button("▶ START AUTO FISH", function()
-            controlFishing(true)
-        end)
-        button("■ STOP AUTO FISH", function()
-            controlFishing(false)
-        end, C.card)
-
-        section("Engine Information")
-        info("Normal fishing, Blatant Mode, Auto Sell, Auto Favorite, Teleport and Anti-AFK.")
-
-    elseif activePage == "Favorite" then
-        section("AUTO FAVORITE")
-
-        toggle("Auto Favorite Fish",
-            Config.AutoFavorite, function(v)
-                updateConfig("AutoFavorite", v)
-            end)
-
-        selector("Favorite Rarity",
-            {"Mythic", "Secret"},
-            Config.FavoriteRarity,
-            function(v)
-                updateConfig("FavoriteRarity", v)
-            end)
-
-        button("⭐ FAVORITE FISH NOW", function()
-            task.spawn(function()
-                local ok, err = pcall(autoFavoriteByRarity)
-                setStatus(ok and
-                    "Favorite routine executed; check log"
-                    or tostring(err),
-                    ok and C.cyan or C.orange)
-            end)
-        end)
-
-        info("Engine only targets Mythic and Secret rarity.")
-
-    elseif activePage == "Teleport" then
-        section("TELEPORT TO ISLAND")
-
-        local locations = {}
-        for name in pairs(LOCATIONS) do
-            table.insert(locations, name)
-        end
-        table.sort(locations)
-
-        selector("Select Island", locations,
-            Config.TeleportLocation,
-            function(v)
-                updateConfig("TeleportLocation", v)
-            end)
-
-        button("◆ TELEPORT", function()
-            local ok, result = pcall(function()
-                return Teleport.to(Config.TeleportLocation)
-            end)
-            setStatus(
-                ok and result and
-                "Teleport requested: " .. Config.TeleportLocation
-                or "Teleport failed or unavailable",
-                ok and result and C.cyan or C.orange
-            )
-        end)
-
-        section("Additional Teleport")
-        missing("Teleport to Player")
-        missing("Saved Location")
-        missing("Event Teleport")
-
-    elseif activePage == "Automation" then
-        section("AUTO FISHING")
-
-        toggle("Auto Fish", fishingActive, function(v)
-            controlFishing(v)
-        end)
-
-        toggle("Blatant Mode",
-            Config.BlatantMode, function(v)
-                updateConfig("BlatantMode", v)
-            end)
-
-        toggle("Auto Catch",
-            Config.AutoCatch, function(v)
-                updateConfig("AutoCatch", v)
-            end)
-
-        numberInput("Fish Delay (s)",
-            Config.FishDelay, 0.1, 10,
-            function(v) updateConfig("FishDelay", v) end)
-
-        numberInput("Catch Delay (s)",
-            Config.CatchDelay, 0.1, 10,
-            function(v) updateConfig("CatchDelay", v) end)
-
-        section("AUTO SELL")
-
-        toggle("Auto Sell",
-            Config.AutoSell, function(v)
-                updateConfig("AutoSell", v)
-            end)
-
-        numberInput("Sell Delay (s)",
-            Config.SellDelay, 10, 300,
-            function(v) updateConfig("SellDelay", v) end)
-
-        button("💰 SELL ALL NOW", function()
-            task.spawn(function()
-                local ok, err = pcall(simpleSell)
-                setStatus(
-                    ok and "Sell routine executed; verify inventory"
-                       or tostring(err),
-                    ok and C.cyan or C.orange
-                )
-            end)
-        end)
-
-        section("PERFORMANCE")
-
-        toggle("GPU Saver",
-            Config.GPUSaver, function(v)
-                Config.GPUSaver = v
-                if v then enableGPU()
-                else disableGPU() end
-                saveConfig()
-                setStatus("GPU Saver: " .. tostring(v))
-            end)
-
-        info("Anti-AFK event listener is initialized by the original engine.")
-
-    elseif activePage == "Shop" then
-        section("SHOP SYSTEM")
-        info("This source does not contain a shop engine.", C.orange)
-        missing("Auto Buy Rod")
-        missing("Auto Buy Bait")
-        missing("Shop Inventory")
-
-    elseif activePage == "Trade" then
-        section("TRADE SYSTEM")
-        info("No player trade engine is available.", C.orange)
-        missing("Trade to Player")
-        missing("Auto Accept Trade")
-        missing("Trade Inventory")
-
-    elseif activePage == "Webhook" then
-        section("WEBHOOK SYSTEM")
-        info("No Discord reporting engine is available.", C.orange)
-        missing("Discord Webhook")
-        missing("Rare Fish Notification")
-        missing("Account Stats Report")
-
-    elseif activePage == "Stats" then
-        section("KIMS ACCOUNT STATS")
-        info("Only inventory data access exists in this source. Full account statistics are unavailable.", C.orange)
-
-        button("CHECK LOCAL INVENTORY", function()
-            local ok, count = pcall(function()
-                local inventory =
-                    PlayerData:GetExpect("Inventory")
-                return #(inventory.Items or {})
-            end)
-            setStatus(
-                ok and ("Inventory entries: " .. count)
-                   or "Inventory read failed",
-                ok and C.cyan or C.orange
-            )
-        end, C.purple)
-
-        missing("Account Level")
-        missing("Coins / Balance")
-        missing("Total Fish Caught")
-        missing("Session Statistics")
-        missing("Rare Fish Counter")
-    end
+    return list
 end
+local selectedPlayer = getPlayerList()[1] or "None"
+local playerDropdown
+playerDropdown = TPTab:CreateDropdown({
+    Name = "Select Player",
+    Options = getPlayerList(),
+    CurrentOption = { selectedPlayer },
+    Callback = function(opt) selectedPlayer = opt end
+})
+TPTab:CreateButton({Name = "🎯 Teleport to Player",
+    Callback = function() teleportToPlayer(selectedPlayer) end})
+TPTab:CreateButton({Name = "🔄 Refresh Player List",
+    Callback = function() playerDropdown:Refresh(getPlayerList()) end})
 
-render()
-setStatus("KIMS UI loaded; engine not yet verified", C.orange)
-print("[KIMS] Custom Neon UI V1 loaded.")
+TPTab:CreateSection("🌐 Server")
+TPTab:CreateButton({Name = "🌐 Server Hop", Callback = function() serverHop() end})
+TPTab:CreateButton({Name = "🔁 Rejoin Server", Callback = function() rejoin() end})
+
+-- ============== TAB 4: SETTINGS ==============
+local SetTab = Window:CreateTab("⚙️ Settings", nil)
+SetTab:CreateSection("Performance")
+
+SetTab:CreateToggle({Name = "🖥️ GPU Saver Mode", CurrentValue = Config.GPUSaver,
+    Callback = function(v) Config.GPUSaver = v; if v then enableGPU() else disableGPU() end; saveConfig() end})
+
+SetTab:CreateToggle({Name = "💡 Fullbright", CurrentValue = Config.Fullbright,
+    Callback = function(v) Config.Fullbright = v; setFullbright(v); saveConfig() end})
+
+SetTab:CreateSection("Movement")
+
+SetTab:CreateSlider({Name = "WalkSpeed", Range = { 16, 200 }, Increment = 1, Suffix = " studs",
+    CurrentValue = Config.WalkSpeed,
+    Callback = function(v) Config.WalkSpeed = v; applySpeed(v); saveConfig() end})
+
+SetTab:CreateSlider({Name = "JumpPower", Range = { 50, 500 }, Increment = 5, Suffix = "",
+    CurrentValue = Config.JumpPower,
+    Callback = function(v) Config.JumpPower = v; applyJump(v); saveConfig() end})
+
+SetTab:CreateSection("Info")
+SetTab:CreateParagraph({Title = "Anti-AFK", Content = "Selalu aktif secara otomatis."})
+
+-- ====================================================================
+--                    STARTUP
+-- ====================================================================
+Rayfield:Notify({
+    Title = "Auto Fish V4.1 Loaded",
+    Content = "Tab: Main, Favorite, Teleport, Settings",
+    Duration = 5,
+    Image = 4483362458
+})
