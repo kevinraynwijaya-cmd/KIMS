@@ -1,3 +1,67 @@
+-- KIMS SCRIPT - RAYFIELD UI TEST V1
+-- Powered by KIMS TECH
+-- UI DEMO ONLY: no auto-fishing, teleport, or game modification.
+-- Rayfield UI: https://github.com/SiriusSoftwareLtd/Rayfield
+
+-- Disable Rayfield analytics for this script session.
+if type(getgenv) == "function" then
+    getgenv().DISABLE_RAYFIELD_REQUESTS = true
+end
+
+local ok, Rayfield = pcall(function()
+    return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+end)
+
+if not ok or not Rayfield then
+    warn("[KIMS TECH] Failed to load Rayfield UI: " .. tostring(Rayfield))
+    return
+end
+
+local Window = Rayfield:CreateWindow({
+    Name = "KIMS SCRIPT | FISH IT",
+    Icon = 0,
+    LoadingTitle = "KIMS TECH",
+    LoadingSubtitle = "Fish It - Rayfield UI Test",
+    Theme = "Default",
+    DisableRayfieldPrompts = false,
+    ConfigurationSaving = { Enabled = false },
+    Discord = { Enabled = false },
+    KeySystem = false
+})
+
+local function notify(message)
+    local success, err = pcall(function()
+        Rayfield:Notify({
+            Title = "KIMS TECH",
+            Content = message,
+            Duration = 4,
+            Image = 4483362458
+        })
+    end)
+    if not success then
+        warn("[KIMS TECH] " .. tostring(message) .. " | " .. tostring(err))
+    end
+end
+
+-- HOME
+local Home = Window:CreateTab("Home", 4483362458)
+Home:CreateSection("Welcome to KIMS TECH")
+Home:CreateButton({
+    Name = "Test KIMS Notification",
+    Callback = function()
+        notify("KIMS SCRIPT UI test berhasil!")
+    end
+})
+
+-- FISHING (UI DEMO ONLY)
+local Fishing = Window:CreateTab("Fishing", 4483362458)
+Fishing:CreateSection("Auto Fishing - Demo")
+Fishing:CreateToggle({
+    Name = "Auto Fish (Demo)",
+    CurrentValue = false,
+    Flag = "KIMS_DEMO_AutoFish",
+    Callback = function(value)
+        notify("Auto Fish Demo: " .. (value and "ON" or "OFF"))
     end
 })
 Fishing:CreateSlider({
