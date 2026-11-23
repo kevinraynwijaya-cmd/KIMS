@@ -1,5 +1,5 @@
 --[[
- KIMS SCRIPT ULTRA | FISH IT | CUSTOM V3.0 (EXPERIMENTAL)
+ KIMS SCRIPT ULTRA | FISH IT | CUSTOM V3.1 (RARITY TEST)
  Powered by KIMS TECH
 
  Standalone custom Roblox UI: NO Rayfield or other UI library.
@@ -37,7 +37,12 @@ local S = {
     casts = 0, reels = 0, scanCount = 0,
     savedPosition = nil, autoAlerts = false,
     webhookURL = "", webhookSent = 0, webhookEvents = 0,
-    filters = { Secret = true, Forgotten = true, Unknown = false },
+    filters = {
+        Common=true, Uncommon=true, Rare=true, Epic=true,
+        Legendary=true, Mythic=true, Secret=true, Forgotten=true,
+        Unknown=true
+    },
+    filteredEvents = 0,
     lastEvent = "Belum ada event", fishConnection = nil,
     webhookQueue = {}, sending = false, lastSentAt = 0, recentEvents = {},
     originalShadows = Lighting.GlobalShadows, lowGraphics = false,
@@ -137,7 +142,7 @@ LogoText.TextXAlignment = Enum.TextXAlignment.Center
 local Brand = label(Header, "KIMS  TECH", isSmall and 15 or 19, C.white, true)
 Brand.Position = UDim2.fromOffset(68, 13)
 Brand.Size = UDim2.new(1, -170, 0, 29)
-local Subtitle = label(Header, "ULTRA SCRIPT  /  FISH IT  /  V3", 10, C.cyan, false)
+local Subtitle = label(Header, "ULTRA SCRIPT  /  FISH IT  /  V3.1", 10, C.cyan, false)
 Subtitle.Position = UDim2.fromOffset(68, 41)
 Subtitle.Size = UDim2.new(1, -170, 0, 18)
 local function iconButton(txt, x, color)
@@ -395,6 +400,12 @@ local function sendDiscord(embed)
     end
     return false, "HTTP " .. tostring(status or result.StatusMessage or "unknown")
 end
+-- All rarity tiers are available for test. Unknown includes events whose
+-- rarity metadata could not be resolved; it is NOT itself a real fish rarity.
+local RARITY_OPTIONS = {
+    "Common", "Uncommon", "Rare", "Epic", "Legendary",
+    "Mythic", "Secret", "Forgotten", "Unknown"
+}
 local RARITY_COLORS = {
     Common=9807270, Uncommon=5763719, Rare=3447003,
     Epic=10181046, Legendary=15844367, Mythic=11027200,
@@ -461,7 +472,10 @@ local function onNewFish(id, weightData, itemData)
     S.webhookEvents = S.webhookEvents + 1
     local fish, rarity, weight, variant = fishInfo(id, weightData, itemData)
     S.lastEvent = fish .. " | " .. rarity .. " | VariantId " .. tostring(variant or "-")
-    if S.filters[rarity] ~= true then return end
+    if S.filters[rarity] ~= true then
+        S.filteredEvents = S.filteredEvents + 1
+        return
+    end
     local key = table.concat({tostring(id),tostring(weight),tostring(variant)},":")
     local now = os.clock()
     if S.recentEvents[key] and now-S.recentEvents[key] < 3.5 then return end
@@ -476,7 +490,7 @@ local function onNewFish(id, weightData, itemData)
             {name="Variant ID", value=tostring(variant or "N/A"), inline=true},
             {name="Fish ID", value=tostring(id or "N/A"), inline=true}
         },
-        footer = {text="KIMS TECH | Custom V3 Experimental"},
+        footer = {text="KIMS TECH | Custom V3.1 Rarity Test"},
         timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
     })
 end
@@ -496,7 +510,7 @@ local function startAlerts()
     stopAlerts()
     S.autoAlerts = true
     S.fishConnection = remotes.obtained.OnClientEvent:Connect(onNewFish)
-    notify("Fish Alerts ON | filter Secret/Forgotten (bisa diubah)")
+    notify("Fish Alerts ON | mengikuti filter rarity yang aktif")
     return true
 end
 
@@ -769,20 +783,33 @@ render = function()
         toggle("AUTO FISH ALERT", "Listen RE/ObtainedNewFishNotification", S.autoAlerts, function(v)
             if v then startAlerts() else stopAlerts(); notify("Fish Alert OFF") end
         end)
-        toggle("FILTER SECRET", "Notifikasi rarity Secret", S.filters.Secret, function(v)
-            S.filters.Secret=v
+        infoCard("TEST MODE V3.1", "Semua rarity ON, termasuk Unknown jika rarity belum terbaca.", true)
+        action("ENABLE ALL RARITIES", "Aktifkan seluruh filter untuk pengujian tangkapan biasa", function()
+            for _, rarity in ipairs(RARITY_OPTIONS) do S.filters[rarity] = true end
+            notify("Semua rarity aktif untuk TEST")
+            render()
         end)
-        toggle("FILTER FORGOTTEN", "Notifikasi rarity Forgotten", S.filters.Forgotten, function(v)
-            S.filters.Forgotten=v
+        action("RESTORE SECRET / FORGOTTEN", "Kembalikan filter langka saja dan matikan Unknown", function()
+            for _, rarity in ipairs(RARITY_OPTIONS) do
+                S.filters[rarity] = (rarity == "Secret" or rarity == "Forgotten")
+            end
+            notify("Filter rare-only dipulihkan")
+            render()
         end)
-        toggle("FILTER UNKNOWN (DEBUG)", "Boleh kirim event tanpa rarity terbaca", S.filters.Unknown, function(v)
-            S.filters.Unknown=v
-        end)
+        for _, rarity in ipairs(RARITY_OPTIONS) do
+            local key = rarity
+            local description = rarity == "Unknown"
+                and "DEBUG: event yang rarity-nya belum terbaca"
+                or ("Kirim event dengan rarity " .. rarity)
+            toggle("FILTER " .. key:upper(), description, S.filters[key], function(v)
+                S.filters[key] = v
+            end)
+        end
         action("TEST DISCORD WEBHOOK", "Kirim pesan test tanpa harus menangkap ikan", function()
             task.spawn(function()
                 local ok,reason=sendDiscord({
                     title="KIMS TECH | Webhook Test", color=65280,
-                    description="KIMS SCRIPT CUSTOM V3: test manual (bukan ikan tertangkap).",
+                    description="KIMS SCRIPT CUSTOM V3.1: test manual (bukan ikan tertangkap).",
                     fields={{name="Player",value=tostring(Player.Name),inline=true}},
                     footer={text="KIMS TECH"},
                     timestamp=os.date("!%Y-%m-%dT%H:%M:%SZ")
@@ -790,7 +817,7 @@ render = function()
                 notify(ok and ("Webhook sent: "..reason) or ("Webhook failed: "..reason))
             end)
         end)
-        action("CHECK LAST FISH EVENT", "Event "..S.webhookEvents.." | Sent "..S.webhookSent, function()
+        action("CHECK LAST FISH EVENT", "Caught events "..S.webhookEvents.." | Filtered "..S.filteredEvents.." | HTTP sent "..S.webhookSent, function()
             notify(S.lastEvent)
         end)
         action("CLEAR WEBHOOK URL", "Hapus URL dari memori dan matikan alert", function()
@@ -823,7 +850,7 @@ render = function()
         action("STOP ALL KIMS TASKS", "Matikan fishing, webhook dan GUI", function()
             ENV.KIMS_CUSTOM_V3_STOP()
         end,true)
-        infoCard("ABOUT", "KIMS CUSTOM V3.0 / Powered by KIMS TECH / Experimental")
+        infoCard("ABOUT", "KIMS CUSTOM V3.1 / Powered by KIMS TECH / Rarity Test")
     end
 end
 
@@ -847,5 +874,5 @@ if not ok then
     warn("[KIMS V3] UI initialization failed: "..tostring(err))
     ENV.KIMS_CUSTOM_V3_STOP()
 else
-    notify("KIMS CUSTOM V3 loaded | Rayfield FREE")
+    notify("KIMS CUSTOM V3.1 loaded | ALL RARITIES")
 end
