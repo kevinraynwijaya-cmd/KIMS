@@ -1,19 +1,68 @@
--- KIMS SCRIPT - RAYFIELD UI TEST V1
--- Powered by KIMS TECH
--- UI DEMO ONLY: no auto-fishing, teleport, or game modification.
--- Rayfield UI: https://github.com/SiriusSoftwareLtd/Rayfield
+--[[
+ KIMS SCRIPT | FISH IT V2.0 EXPERIMENTAL
+ Powered by KIMS TECH
+ Rayfield UI + experimental normal fishing engine + Discord fish alerts.
 
--- Disable Rayfield analytics for this script session.
+ Source references:
+   SiriusSoftwareLtd/Rayfield (UI)
+   KIMS FISH IT V1.3, GitHub history 2026-11-04 (fishing remotes)
+   MelodySsy/fish-it-roblox (webhook embed/filter design)
+   Draa Community (RE/ObtainedNewFishNotification event structure)
+
+ IMPORTANT:
+ - Server acceptance of fishing requests is NOT guaranteed.
+ - A successful remote call is NOT proof a fish was caught.
+ - Discord URL is entered at runtime, never hard-coded or uploaded.
+ - Defaults are OFF; no auto sell, trade, or purchases.
+ - Using third-party executors can breach game/platform rules.
+]]
+
 if type(getgenv) == "function" then
-    getgenv().DISABLE_RAYFIELD_REQUESTS = true
+    pcall(function() getgenv().DISABLE_RAYFIELD_REQUESTS = true end)
 end
 
-local ok, Rayfield = pcall(function()
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local Lighting = game:GetService("Lighting")
+local player = Players.LocalPlayer
+if not player then
+    warn("[KIMS V2] LocalPlayer unavailable")
+    return
+end
+
+local ENV = (type(getgenv) == "function" and getgenv()) or _G
+if type(ENV.KIMS_V2_STOP) == "function" then
+    pcall(ENV.KIMS_V2_STOP)
+end
+
+local state = {
+    alive = true,
+    autoFish = false,
+    token = 0,
+    fishDelay = 2.5,
+    catchDelay = 0.6,
+    protocol = "KIMS V1.3",
+    requestsSent = 0,
+    webhookURL = "",
+    monitor = false,
+    fishConnection = nil,
+    lastFishEvent = "None",
+    lastSent = 0,
+    webhookQueue = {},
+    senderRunning = false,
+    recent = {},
+    webhookFilters = { Secret = true, Forgotten = true },
+    savedPosition = nil,
+    originalShadows = Lighting.GlobalShadows,
+    graphicsChanged = false
+}
+
+local okUI, Rayfield = pcall(function()
     return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 end)
-
-if not ok or not Rayfield then
-    warn("[KIMS TECH] Failed to load Rayfield UI: " .. tostring(Rayfield))
+if not okUI or not Rayfield then
+    warn("[KIMS V2] Rayfield load failed: " .. tostring(Rayfield))
     return
 end
 
@@ -21,7 +70,7 @@ local Window = Rayfield:CreateWindow({
     Name = "KIMS SCRIPT | FISH IT",
     Icon = 0,
     LoadingTitle = "KIMS TECH",
-    LoadingSubtitle = "Fish It - Rayfield UI Test",
+    LoadingSubtitle = "Fishing Engine + Webhook V2 (Experimental)",
     Theme = "Default",
     DisableRayfieldPrompts = false,
     ConfigurationSaving = { Enabled = false },
@@ -29,94 +78,561 @@ local Window = Rayfield:CreateWindow({
     KeySystem = false
 })
 
-local function notify(message)
-    local success, err = pcall(function()
+local function notify(message, duration)
+    pcall(function()
         Rayfield:Notify({
-            Title = "KIMS TECH",
-            Content = message,
-            Duration = 4,
+            Title = "KIMS TECH V2",
+            Content = tostring(message),
+            Duration = duration or 5,
             Image = 4483362458
         })
     end)
-    if not success then
-        warn("[KIMS TECH] " .. tostring(message) .. " | " .. tostring(err))
+    print("[KIMS V2] " .. tostring(message))
+end
+
+local REMOTE_NAMES = {
+    equip = "RE/EquipToolFromHotbar",
+    charge = "RF/ChargeFishingRod",
+    minigame = "RF/RequestFishingMinigameStarted",
+    fishing = "RE/FishingCompleted",
+    obtained = "RE/ObtainedNewFishNotification"
+}
+local remotes = {}
+local function findNet()
+    local packages = RS:FindFirstChild("Packages")
+    local index = packages and packages:FindFirstChild("_Index")
+    if not index then return nil end
+    local netPackage = index:FindFirstChild("sleitnick_net@0.2.0")
+    if not netPackage then
+        for _, child in ipairs(index:GetChildren()) do
+            if string.find(child.Name, "sleitnick_net", 1, true) then
+                netPackage = child
+                break
+            end
+        end
+    end
+    return netPackage and netPackage:FindFirstChild("net") or nil
+end
+
+local function scanEngine()
+    local net = findNet()
+    local found = 0
+    for key, name in pairs(REMOTE_NAMES) do
+        remotes[key] = net and net:FindFirstChild(name) or nil
+        if remotes[key] then found = found + 1 end
+    end
+    return found
+end
+
+local function engineReady()
+    local missing = {}
+    local expected = {
+        equip = "RemoteEvent", charge = "RemoteFunction",
+        minigame = "RemoteFunction", fishing = "RemoteEvent"
+    }
+    for key, typeName in pairs(expected) do
+        if not remotes[key] or not remotes[key]:IsA(typeName) then
+            table.insert(missing, key)
+        end
+    end
+    return #missing == 0, table.concat(missing, ", ")
+end
+
+local function fire(key, ...)
+    local remote = remotes[key]
+    if not remote or not remote:IsA("RemoteEvent") then
+        return false, "RemoteEvent missing: " .. key
+    end
+    local success, err = pcall(function(...) remote:FireServer(...) end, ...)
+    return success, err
+end
+
+local function invoke(key, ...)
+    local remote = remotes[key]
+    if not remote or not remote:IsA("RemoteFunction") then
+        return false, "RemoteFunction missing: " .. key
+    end
+    local success, result = pcall(function(...) return remote:InvokeServer(...) end, ...)
+    if not success then return false, result end
+    if result == false then return false, "Server returned false: " .. key end
+    return true, result
+end
+
+local function stopFishing()
+    state.autoFish = false
+    state.token = state.token + 1
+end
+
+local function startFishing()
+    if state.autoFish then return true end
+    scanEngine()
+    local ready, missing = engineReady()
+    if not ready then
+        notify("Fishing engine unavailable: " .. missing, 7)
+        return false
+    end
+
+    state.autoFish = true
+    state.token = state.token + 1
+    local myToken = state.token
+    notify("Auto Fish started (experimental). Check real catches in-game.")
+    task.spawn(function()
+        while state.alive and state.autoFish and myToken == state.token do
+            local ok, err = fire("equip", 1)
+            if not ok then notify("Fishing error (equip): " .. tostring(err)); break end
+            task.wait(0.15)
+            if not state.autoFish or myToken ~= state.token then break end
+
+            -- Two observed community protocols; neither is verified today.
+            local chargeArg, minigameArg
+            if state.protocol == "Draa" then
+                chargeArg, minigameArg = 2, -1.25
+            else
+                local timeOk, timestamp = pcall(function() return workspace:GetServerTimeNow() end)
+                chargeArg = timeOk and timestamp or os.time()
+                minigameArg = 1.2854545116425
+            end
+            ok, err = invoke("charge", chargeArg)
+            if not ok then notify("Fishing error (charge): " .. tostring(err)); break end
+            task.wait(0.1)
+            if not state.autoFish or myToken ~= state.token then break end
+
+            ok, err = invoke("minigame", minigameArg, 1)
+            if not ok then notify("Fishing error (minigame): " .. tostring(err)); break end
+            task.wait(state.fishDelay)
+            if not state.autoFish or myToken ~= state.token then break end
+
+            ok, err = fire("fishing")
+            if not ok then notify("Fishing error (reel): " .. tostring(err)); break end
+            state.requestsSent = state.requestsSent + 1
+            task.wait(state.catchDelay)
+        end
+        if myToken == state.token then
+            state.autoFish = false
+            notify("Auto Fish stopped. Requests sent: " .. state.requestsSent)
+        end
+    end)
+    return true
+end
+
+-- Discord webhook helpers. URL is never saved in public code.
+local function validDiscordURL(url)
+    return type(url) == "string" and (
+        url:match("^https://discord%.com/api/webhooks/%d+/[%w_%-]+") or
+        url:match("^https://discordapp%.com/api/webhooks/%d+/[%w_%-]+")
+    ) ~= nil
+end
+
+local function executorRequest()
+    if type(request) == "function" then return request end
+    if type(http_request) == "function" then return http_request end
+    if type(syn) == "table" and type(syn.request) == "function" then return syn.request end
+    if type(http) == "table" and type(http.request) == "function" then return http.request end
+    return nil
+end
+
+local function sendDiscord(embed, bypassMonitor)
+    if not validDiscordURL(state.webhookURL) then return false, "Discord URL belum diisi / tidak valid" end
+    if not bypassMonitor and not state.monitor then return false, "Monitor OFF" end
+    local send = executorRequest()
+    if not send then return false, "Executor tidak menyediakan HTTP request API" end
+    local payload = {
+        username = "KIMS TECH | Fish Alert",
+        allowed_mentions = { parse = {} },
+        embeds = { embed }
+    }
+    local ok, result = pcall(function()
+        return send({
+            Url = state.webhookURL,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode(payload)
+        })
+    end)
+    if not ok then return false, tostring(result) end
+    if type(result) == "table" then
+        local status = tonumber(result.StatusCode or result.Status or result.status)
+        if status and status >= 200 and status < 300 then return true, "HTTP " .. status end
+        if status then return false, "HTTP " .. status end
+        if result.Success == true then return true, "request accepted" end
+        return false, tostring(result.StatusMessage or result.Body or "HTTP request did not confirm success")
+    end
+    return false, "HTTP request did not return a status"
+end
+
+local COLORS = {
+    Common = 9807270, Uncommon = 5763719, Rare = 3447003,
+    Epic = 10181046, Legendary = 15844367, Mythic = 11027200,
+    Secret = 16711680, Forgotten = 16753920
+}
+local function normalizeRarity(raw)
+    if raw == nil then return "Unknown" end
+    local x = tostring(raw):lower()
+    if x == "mythical" then return "Mythic" end
+    for tier in pairs(COLORS) do
+        if x == tier:lower() then return tier end
+    end
+    return "Unknown"
+end
+
+local itemUtility
+local function resolveItemUtility()
+    if itemUtility then return end
+    local shared = RS:FindFirstChild("Shared")
+    local mod = shared and shared:FindFirstChild("ItemUtility")
+    if mod and mod:IsA("ModuleScript") then
+        local ok, value = pcall(require, mod)
+        if ok then itemUtility = value end
     end
 end
 
--- HOME
+local function extractFish(fishId, weightData, itemData)
+    local inventoryItem = type(itemData) == "table" and itemData.InventoryItem or nil
+    local metadata = type(inventoryItem) == "table" and inventoryItem.Metadata or nil
+    local resolvedId = fishId or (type(inventoryItem) == "table" and inventoryItem.Id)
+    local name = "Unknown Fish (ID " .. tostring(resolvedId) .. ")"
+    local rarity = "Unknown"
+    resolveItemUtility()
+    if itemUtility and resolvedId then
+        local ok, result = pcall(function() return itemUtility:GetItemData(resolvedId) end)
+        if ok and type(result) == "table" then
+            local info = type(result.Data) == "table" and result.Data or result
+            name = tostring(info.Name or info.DisplayName or name)
+            rarity = normalizeRarity(info.Rarity or info.Tier)
+        end
+    end
+    local weight = (type(weightData) == "table" and weightData.Weight)
+        or (type(metadata) == "table" and metadata.Weight)
+    local variant = (type(weightData) == "table" and weightData.VariantId)
+        or (type(metadata) == "table" and metadata.VariantId)
+    return name, rarity, weight, variant
+end
+
+-- Serial sender to respect Discord rate limits and avoid sending bursts.
+local function enqueueDiscord(embed)
+    if #state.webhookQueue >= 30 then
+        table.remove(state.webhookQueue, 1)
+        notify("Webhook queue full: oldest event dropped", 7)
+    end
+    table.insert(state.webhookQueue, embed)
+    if state.senderRunning then return end
+    state.senderRunning = true
+    task.spawn(function()
+        while state.alive and state.monitor and #state.webhookQueue > 0 do
+            local pause = math.max(0, 2.2 - (os.clock() - state.lastSent))
+            if pause > 0 then task.wait(pause) end
+            if not state.alive or not state.monitor then break end
+            local nextEmbed = table.remove(state.webhookQueue, 1)
+            state.lastSent = os.clock()
+            local ok, reason = sendDiscord(nextEmbed, false)
+            if not ok then notify("Webhook send failed: " .. tostring(reason), 7) end
+        end
+        state.senderRunning = false
+    end)
+end
+
+local function listenFish(fishId, weightData, itemData, isNew)
+    if not state.alive or not state.monitor then return end
+    local name, rarity, weight, variant = extractFish(fishId, weightData, itemData)
+    state.lastFishEvent = "ID " .. tostring(fishId) .. " | " .. name ..
+        " | Rarity " .. rarity .. " | Variant " .. tostring(variant or "N/A")
+    if state.webhookFilters[rarity] ~= true then return end
+
+    local key = table.concat({tostring(fishId), tostring(weight), tostring(variant)}, ":")
+    local now = os.clock()
+    if state.recent[key] and now - state.recent[key] < 4 then return end
+    state.recent[key] = now
+
+    local embed = {
+        title = "KIMS | Fish Caught",
+        color = COLORS[rarity] or 3447003,
+        fields = {
+            {name = "Player", value = tostring(player.Name), inline = true},
+            {name = "Fish", value = name, inline = true},
+            {name = "Rarity", value = rarity, inline = true},
+            {name = "Weight (raw)", value = tostring(weight or "N/A"), inline = true},
+            {name = "Variant ID", value = tostring(variant or "N/A"), inline = true},
+            {name = "Fish ID", value = tostring(fishId or "N/A"), inline = true}
+        },
+        footer = {text = "KIMS TECH • Experimental event monitor"},
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+    }
+    enqueueDiscord(embed)
+end
+
+local function stopMonitor()
+    state.monitor = false
+    state.webhookQueue = {}
+    if state.fishConnection then
+        state.fishConnection:Disconnect()
+        state.fishConnection = nil
+    end
+end
+
+local function startMonitor()
+    stopMonitor()
+    if not validDiscordURL(state.webhookURL) then
+        notify("Isi Discord webhook URL dulu", 7)
+        return false
+    end
+    if not executorRequest() then
+        notify("Delta HTTP request API tidak tersedia", 7)
+        return false
+    end
+    scanEngine()
+    local event = remotes.obtained
+    if not event or not event:IsA("RemoteEvent") then
+        notify("Remote RE/ObtainedNewFishNotification tidak ditemukan", 7)
+        return false
+    end
+    state.monitor = true
+    state.fishConnection = event.OnClientEvent:Connect(listenFish)
+    notify("Fish webhook monitoring ON. Filter rarity aktif.")
+    return true
+end
+
+ENV.KIMS_V2_STOP = function()
+    state.alive = false
+    stopFishing()
+    stopMonitor()
+    if state.graphicsChanged then
+        pcall(function() Lighting.GlobalShadows = state.originalShadows end)
+    end
+end
+
+-- ======================== RAYFIELD UI ========================
 local Home = Window:CreateTab("Home", 4483362458)
-Home:CreateSection("Welcome to KIMS TECH")
+Home:CreateSection("KIMS TECH | Fish It V2 Experimental")
+Home:CreateParagraph({
+    Title = "Info",
+    Content = "Rayfield UI + experimental normal fishing remotes + Discord caught-fish webhook. ON tidak menjamin server menerima tangkapan."
+})
 Home:CreateButton({
-    Name = "Test KIMS Notification",
+    Name = "Scan Fish It Engine",
     Callback = function()
-        notify("KIMS SCRIPT UI test berhasil!")
+        local count = scanEngine()
+        local ready, missing = engineReady()
+        local event = remotes.obtained and remotes.obtained:IsA("RemoteEvent")
+        notify("Remotes " .. count .. "/5 | Fishing: " ..
+            (ready and "READY (untested)" or ("MISSING " .. missing)) ..
+            " | Fish event: " .. (event and "FOUND" or "MISSING"), 9)
+    end
+})
+Home:CreateButton({
+    Name = "Show Status",
+    Callback = function()
+        notify("Auto Fish: " .. (state.autoFish and "ON" or "OFF") ..
+            " | Webhook: " .. (state.monitor and "ON" or "OFF") ..
+            " | Reel requests: " .. state.requestsSent)
     end
 })
 
--- FISHING (UI DEMO ONLY)
 local Fishing = Window:CreateTab("Fishing", 4483362458)
-Fishing:CreateSection("Auto Fishing - Demo")
-Fishing:CreateToggle({
-    Name = "Auto Fish (Demo)",
+Fishing:CreateSection("Normal Fishing Engine (Experimental)")
+local fishToggle
+fishToggle = Fishing:CreateToggle({
+    Name = "Auto Fish (Experimental)",
     CurrentValue = false,
-    Flag = "KIMS_DEMO_AutoFish",
+    Flag = "KIMS_V2_AutoFish",
     Callback = function(value)
-        notify("Auto Fish Demo: " .. (value and "ON" or "OFF"))
-    end
-})
-Fishing:CreateSlider({
-    Name = "Fishing Delay (Demo)",
-    Range = { 0, 10 },
-    Increment = 1,
-    Suffix = "s",
-    CurrentValue = 3,
-    Flag = "KIMS_DEMO_FishDelay",
-    Callback = function(value)
-        print("[KIMS TECH] Fishing Delay Demo:", value)
-    end
-})
-
--- TELEPORT (UI DEMO ONLY)
-local Teleport = Window:CreateTab("Teleport", 4483362458)
-Teleport:CreateSection("Location Selection - Demo")
-local selectedLocation = "Spawn"
-Teleport:CreateDropdown({
-    Name = "Choose Location",
-    Options = { "Spawn", "Kohana", "Lost Isle", "Ancient Jungle" },
-    CurrentOption = { "Spawn" },
-    MultipleOptions = false,
-    Flag = "KIMS_DEMO_Location",
-    Callback = function(options)
-        if type(options) == "table" then
-            selectedLocation = options[1] or "Spawn"
-        elseif type(options) == "string" then
-            selectedLocation = options
+        if value then
+            if not startFishing() then
+                task.defer(function()
+                    if fishToggle then pcall(function() fishToggle:Set(false) end) end
+                end)
+            end
+        else
+            stopFishing()
+            notify("Auto Fish OFF")
         end
     end
 })
-Teleport:CreateButton({
-    Name = "Teleport (Demo)",
+Fishing:CreateDropdown({
+    Name = "Cast Protocol (Experimental)",
+    Options = {"KIMS V1.3", "Draa"},
+    CurrentOption = {"KIMS V1.3"},
+    MultipleOptions = false,
+    Flag = "KIMS_V2_CastProtocol",
+    Callback = function(selected)
+        if type(selected) == "table" then
+            state.protocol = selected[1] or "KIMS V1.3"
+        elseif type(selected) == "string" then
+            state.protocol = selected
+        end
+        notify("Cast protocol: " .. state.protocol)
+    end
+})
+Fishing:CreateSlider({
+    Name = "Fishing Delay",
+    Range = {1, 10}, Increment = 0.5, Suffix = "s",
+    CurrentValue = state.fishDelay,
+    Flag = "KIMS_V2_FishDelay",
+    Callback = function(value) state.fishDelay = value end
+})
+Fishing:CreateSlider({
+    Name = "Catch Delay",
+    Range = {0.3, 3}, Increment = 0.1, Suffix = "s",
+    CurrentValue = state.catchDelay,
+    Flag = "KIMS_V2_CatchDelay",
+    Callback = function(value) state.catchDelay = value end
+})
+Fishing:CreateButton({
+    Name = "Stop Fishing Now",
     Callback = function()
-        notify("Selected location: " .. selectedLocation)
+        stopFishing()
+        if fishToggle then pcall(function() fishToggle:Set(false) end) end
+        notify("Auto Fish stopped")
     end
 })
 
--- SETTINGS (UI DEMO ONLY)
-local Settings = Window:CreateTab("Settings", 4483362458)
-Settings:CreateSection("KIMS Settings")
-Settings:CreateToggle({
-    Name = "Low Graphics (Demo)",
-    CurrentValue = false,
-    Flag = "KIMS_DEMO_LowGraphics",
+local Teleport = Window:CreateTab("Teleport", 4483362458)
+Teleport:CreateSection("Saved Location - Local Player")
+Teleport:CreateButton({
+    Name = "Save Current Position",
+    Callback = function()
+        local char = player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then notify("Character root not found"); return end
+        state.savedPosition = root.CFrame
+        notify("Current position saved (this session)")
+    end
+})
+Teleport:CreateButton({
+    Name = "Teleport to Saved Position",
+    Callback = function()
+        local char = player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root or not state.savedPosition then
+            notify("Save a position first")
+            return
+        end
+        local ok, err = pcall(function() root.CFrame = state.savedPosition end)
+        notify(ok and "Teleport requested" or ("Teleport failed: " .. tostring(err)))
+    end
+})
+
+local Webhook = Window:CreateTab("Webhook", 4483362458)
+Webhook:CreateSection("Discord Fish Alerts")
+Webhook:CreateParagraph({
+    Title = "Privacy",
+    Content = "Webhook URL hanya disimpan sementara di memori perangkat, bukan di GitHub/config. Jangan bagikan URL webhook ke orang lain."
+})
+Webhook:CreateInput({
+    Name = "Discord Webhook URL",
+    CurrentValue = "",
+    PlaceholderText = "https://discord.com/api/webhooks/...",
+    RemoveTextAfterFocusLost = false,
+    Flag = "KIMS_V2_WebhookURL",
     Callback = function(value)
-        notify("Low Graphics Demo: " .. (value and "ON" or "OFF"))
+        local url = type(value) == "string" and value:match("^%s*(.-)%s*$") or ""
+        if url == "" then
+            state.webhookURL = ""
+            stopMonitor()
+            notify("Webhook URL cleared; monitoring OFF")
+        elseif validDiscordURL(url) then
+            state.webhookURL = url
+            notify("Webhook URL valid (not saved)")
+        else
+            state.webhookURL = ""
+            stopMonitor()
+            notify("Discord webhook URL tidak valid", 7)
+        end
+    end
+})
+Webhook:CreateDropdown({
+    Name = "Rarity Filter",
+    Options = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret", "Forgotten"},
+    CurrentOption = {"Secret", "Forgotten"},
+    MultipleOptions = true,
+    Flag = "KIMS_V2_RarityFilter",
+    Callback = function(selected)
+        state.webhookFilters = {}
+        if type(selected) == "table" then
+            for key, value in pairs(selected) do
+                if type(value) == "string" then
+                    state.webhookFilters[value] = true
+                elseif type(key) == "string" and value == true then
+                    state.webhookFilters[key] = true
+                end
+            end
+        elseif type(selected) == "string" then
+            state.webhookFilters[selected] = true
+        end
+    end
+})
+local webhookToggle
+webhookToggle = Webhook:CreateToggle({
+    Name = "Enable Fish Alerts",
+    CurrentValue = false,
+    Flag = "KIMS_V2_WebhookMonitor",
+    Callback = function(value)
+        if value then
+            if not startMonitor() then
+                task.defer(function()
+                    if webhookToggle then pcall(function() webhookToggle:Set(false) end) end
+                end)
+            end
+        else
+            stopMonitor()
+            notify("Fish webhook monitoring OFF")
+        end
+    end
+})
+Webhook:CreateButton({
+    Name = "Check Last Fish Event",
+    Callback = function()
+        notify("Last event: " .. state.lastFishEvent, 9)
+    end
+})
+Webhook:CreateButton({
+    Name = "Test Discord Webhook",
+    Callback = function()
+        local embed = {
+            title = "KIMS TECH | Webhook Test",
+            description = "Webhook berhasil dikirim dari KIMS SCRIPT V2 jika pesan ini muncul.",
+            color = 65280,
+            fields = {
+                { name = "Player", value = tostring(player.Name), inline = true },
+                { name = "Mode", value = "Manual test (not a caught fish)", inline = true }
+            },
+            footer = { text = "KIMS TECH" },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }
+        task.spawn(function()
+            local ok, reason = sendDiscord(embed, true)
+            notify(ok and ("Webhook test sent: " .. tostring(reason))
+                or ("Webhook test failed: " .. tostring(reason)), 7)
+        end)
+    end
+})
+
+local Settings = Window:CreateTab("Settings", 4483362458)
+Settings:CreateSection("Local Performance")
+Settings:CreateToggle({
+    Name = "Low Graphics - Shadows Only",
+    CurrentValue = false,
+    Flag = "KIMS_V2_LowGraphics",
+    Callback = function(value)
+        pcall(function()
+            Lighting.GlobalShadows = value and false or state.originalShadows
+            state.graphicsChanged = value
+        end)
+        notify("Shadows: " .. (value and "OFF" or "RESTORED"))
     end
 })
 Settings:CreateButton({
     Name = "About KIMS SCRIPT",
     Callback = function()
-        notify("KIMS SCRIPT UI TEST V1 | Powered by KIMS TECH")
+        notify("KIMS TECH V2 | Rayfield + experimental engine + Discord alerts")
+    end
+})
+Settings:CreateButton({
+    Name = "Stop KIMS V2 Tasks",
+    Callback = function()
+        ENV.KIMS_V2_STOP()
+        notify("V2 tasks stopped. Re-execute to start again.")
     end
 })
 
-notify("KIMS SCRIPT Rayfield UI Test V1 loaded!")
+scanEngine()
+notify("KIMS SCRIPT V2 UI loaded! Scan Engine before Auto Fish.")
