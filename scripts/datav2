@@ -1,878 +1,150 @@
---[[
- KIMS SCRIPT ULTRA | FISH IT | CUSTOM V3.1 (RARITY TEST)
- Powered by KIMS TECH
 
- Standalone custom Roblox UI: NO Rayfield or other UI library.
- Modules: custom interface, diagnostic fishing engine, saved-position TP,
- read-only inventory inspection, Discord caught-fish webhook monitor.
+-- KIMS STAT AKUN V1
+-- READ ONLY | NO REMOTES | NO WEBHOOK
 
- Engine reference: KIMS FISH IT V1.3 (archived GitHub version Nov 2026).
- Webhook structure reference: MelodySsy/fish-it-roblox.
- IMPORTANT: Remote calls / caught-fish data are not verified on current Fish It.
- A remote being found or called successfully does not prove a catch.
- All automation OFF by default. Never paste webhook credentials into GitHub.
- Using an executor/automation may violate game/platform terms.
-]]
-
-local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
-local UIS = game:GetService("UserInputService")
-local Http = game:GetService("HttpService")
-local Lighting = game:GetService("Lighting")
-local RunService = game:GetService("RunService")
-local Player = Players.LocalPlayer
-if not Player then warn("[KIMS V3] LocalPlayer unavailable") return end
-local PG = Player:WaitForChild("PlayerGui", 12)
-if not PG then warn("[KIMS V3] PlayerGui unavailable") return end
+local Players = game:GetService("Players")
 
-local ENV = (type(getgenv) == "function" and getgenv()) or _G
-if type(ENV.KIMS_CUSTOM_V3_STOP) == "function" then
-    pcall(ENV.KIMS_CUSTOM_V3_STOP)
+print("========== KIMS STAT TEST V1 ==========")
+
+local player = Players.LocalPlayer
+if not player then
+    warn("[FAIL] LocalPlayer tidak tersedia")
+    return
 end
 
-local S = {
-    alive = true, visible = true, minimized = false,
-    activeTab = "HOME", fishing = false, token = 0,
-    fishDelay = 2.5, catchDelay = 0.8, protocol = "KIMS V1.3",
-    casts = 0, reels = 0, scanCount = 0,
-    savedPosition = nil, autoAlerts = false,
-    webhookURL = "", webhookSent = 0, webhookEvents = 0,
-    filters = {
-        Common=true, Uncommon=true, Rare=true, Epic=true,
-        Legendary=true, Mythic=true, Secret=true, Forgotten=true,
-        Unknown=true
-    },
-    filteredEvents = 0,
-    lastEvent = "Belum ada event", fishConnection = nil,
-    webhookQueue = {}, sending = false, lastSentAt = 0, recentEvents = {},
-    originalShadows = Lighting.GlobalShadows, lowGraphics = false,
-    inventorySummary = "Belum scan inventory", inventoryDetails = {},
-    status = "KIMS CUSTOM V3 siap. Scan Engine sebelum Auto Fish.",
-    confirmSellUntil = 0, connections = {},
-}
+print("[PASS] LocalPlayer")
 
-local C = {
-    bg = Color3.fromRGB(10, 14, 25), panel = Color3.fromRGB(18, 24, 39),
-    raised = Color3.fromRGB(27, 34, 54), raised2 = Color3.fromRGB(36, 44, 67),
-    border = Color3.fromRGB(58, 69, 96), white = Color3.fromRGB(239, 244, 255),
-    muted = Color3.fromRGB(151, 163, 186), cyan = Color3.fromRGB(58, 227, 219),
-    purple = Color3.fromRGB(154, 105, 255), gold = Color3.fromRGB(252, 196, 96),
-    green = Color3.fromRGB(69, 203, 143), red = Color3.fromRGB(250, 101, 118)
-}
-local function track(conn)
-    table.insert(S.connections, conn)
-    return conn
-end
-local function new(class, parent, props)
-    local o = Instance.new(class)
-    for k, v in pairs(props or {}) do o[k] = v end
-    o.Parent = parent
-    return o
-end
-local function corner(obj, n)
-    return new("UICorner", obj, { CornerRadius = UDim.new(0, n or 10) })
-end
-local function stroke(obj, color, thickness, transparency)
-    return new("UIStroke", obj, {Color = color or C.border,
-        Thickness = thickness or 1, Transparency = transparency or 0})
-end
-local function label(parent, txt, size, color, bold)
-    return new("TextLabel", parent, {
-        BackgroundTransparency = 1, Text = tostring(txt),
-        Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham,
-        TextColor3 = color or C.white, TextSize = size or 13,
-        TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left,
-        TextYAlignment = Enum.TextYAlignment.Center,
-    })
-end
-local function gradient(parent)
-    new("UIGradient", parent, {
-        Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, C.purple),
-            ColorSequenceKeypoint.new(1, C.cyan)
-        }), Rotation = 0
-    })
+local packages = RS:FindFirstChild("Packages")
+local moduleScript = packages
+    and packages:FindFirstChild("Replion")
+
+if not moduleScript then
+    warn("[FAIL] Modul Replion tidak ditemukan")
+    return
 end
 
--- Main overlay. UI is added to PlayerGui, not an unknown third-party library.
-local Screen = new("ScreenGui", PG, {
-    Name = "KIMS_TECH_CUSTOM_V3", ResetOnSpawn = false,
-    ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 800000,
-    IgnoreGuiInset = true
-})
-local Viewport = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize)
-    or Vector2.new(800, 600)
-local W = math.max(300, math.min(700, Viewport.X - 22))
-local H = math.max(300, math.min(520, Viewport.Y - 42))
-local isSmall = W < 490
-local sideW = isSmall and 100 or 151
-
-local Floating = new("TextButton", Screen, {
-    Name = "KIMSFloating", Text = "K", Font = Enum.Font.GothamBold,
-    TextSize = 24, TextColor3 = C.white, BackgroundColor3 = C.purple,
-    Size = UDim2.fromOffset(56, 56), Position = UDim2.new(1, -78, .42, 0),
-    BorderSizePixel = 0, Visible = false, AutoButtonColor = true
-})
-corner(Floating, 18); stroke(Floating, C.cyan, 2)
-new("UIGradient", Floating, {Color = ColorSequence.new(C.purple, C.cyan), Rotation = 45})
-local Main = new("Frame", Screen, {
-    Name = "KIMSWindow", AnchorPoint = Vector2.new(.5, .5),
-    Position = UDim2.fromScale(.5, .5), Size = UDim2.fromOffset(W, H),
-    BackgroundColor3 = C.bg, BorderSizePixel = 0, ClipsDescendants = true
-})
-corner(Main, 17); stroke(Main, C.border, 1.2)
-
-local Header = new("Frame", Main, {
-    Name = "Header", Size = UDim2.new(1, 0, 0, 70),
-    BackgroundColor3 = C.panel, BorderSizePixel = 0
-})
-local accentLine = new("Frame", Header, {
-    Size = UDim2.new(1, 0, 0, 3), Position = UDim2.fromOffset(0, 67),
-    BorderSizePixel = 0, BackgroundColor3 = C.purple
-})
-gradient(accentLine)
-local Logo = new("Frame", Header, {
-    BackgroundColor3 = C.purple, BorderSizePixel = 0,
-    Position = UDim2.fromOffset(16, 14), Size = UDim2.fromOffset(42, 42)
-})
-corner(Logo, 12); gradient(Logo)
-local LogoText = label(Logo, "K", 24, C.white, true)
-LogoText.Size = UDim2.fromScale(1, 1)
-LogoText.TextXAlignment = Enum.TextXAlignment.Center
-local Brand = label(Header, "KIMS  TECH", isSmall and 15 or 19, C.white, true)
-Brand.Position = UDim2.fromOffset(68, 13)
-Brand.Size = UDim2.new(1, -170, 0, 29)
-local Subtitle = label(Header, "ULTRA SCRIPT  /  FISH IT  /  V3.1", 10, C.cyan, false)
-Subtitle.Position = UDim2.fromOffset(68, 41)
-Subtitle.Size = UDim2.new(1, -170, 0, 18)
-local function iconButton(txt, x, color)
-    local b = new("TextButton", Header, {Text = txt,
-        Font = Enum.Font.GothamBold, TextSize = 18,
-        TextColor3 = color or C.white, BackgroundColor3 = C.raised,
-        Size = UDim2.fromOffset(32, 32),
-        Position = UDim2.new(1, x, 0, 19), BorderSizePixel = 0})
-    corner(b, 9)
-    return b
-end
-local MinBtn = iconButton("−", -86, C.gold)
-local CloseBtn = iconButton("×", -46, C.red)
-
-local Nav = new("ScrollingFrame", Main, {
-    Name = "Navigation", Position = UDim2.fromOffset(0, 70),
-    Size = UDim2.new(0, sideW, 1, -70),
-    BackgroundColor3 = C.panel, BorderSizePixel = 0,
-    ScrollBarThickness = 0, AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    CanvasSize = UDim2.new(), ScrollingDirection = Enum.ScrollingDirection.Y
-})
-new("UIPadding", Nav, {
-    PaddingLeft = UDim.new(0, 9), PaddingRight = UDim.new(0, 8),
-    PaddingTop = UDim.new(0, 13), PaddingBottom = UDim.new(0, 10)
-})
-new("UIListLayout", Nav, {
-    Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder
-})
-local Body = new("ScrollingFrame", Main, {
-    Name = "Content", Position = UDim2.fromOffset(sideW, 70),
-    Size = UDim2.new(1, -sideW, 1, -70),
-    BackgroundColor3 = C.bg, BorderSizePixel = 0,
-    ScrollBarThickness = 3, ScrollBarImageColor3 = C.purple,
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    CanvasSize = UDim2.new(), ScrollingDirection = Enum.ScrollingDirection.Y
-})
-new("UIPadding", Body, {
-    PaddingLeft = UDim.new(0, 15), PaddingRight = UDim.new(0, 16),
-    PaddingTop = UDim.new(0, 13), PaddingBottom = UDim.new(0, 28)
-})
-new("UIListLayout", Body, {
-    Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder
-})
-local Toast = new("TextLabel", Screen, {
-    Name = "StatusToast", Visible = false, BackgroundColor3 = C.raised,
-    TextColor3 = C.white, Font = Enum.Font.Gotham,
-    TextWrapped = true, TextSize = 13,
-    TextXAlignment = Enum.TextXAlignment.Center, TextYAlignment = Enum.TextYAlignment.Center,
-    AnchorPoint = Vector2.new(.5, 1), Position = UDim2.new(.5, 0, 1, -24),
-    Size = UDim2.fromOffset(math.min(W - 25, 500), 56), BorderSizePixel = 0,
-    ZIndex = 20
-})
-corner(Toast, 12); stroke(Toast, C.purple)
-local toastToken = 0
-local render
-local function notify(msg)
-    S.status = tostring(msg)
-    print("[KIMS V3] " .. S.status)
-    toastToken = toastToken + 1
-    local id = toastToken
-    Toast.Text = S.status
-    Toast.Visible = true
-    task.delay(4.5, function()
-        if S.alive and id == toastToken then Toast.Visible = false end
-    end)
-end
-local function hideUI()
-    S.visible = false
-    Main.Visible = false
-    Floating.Visible = true
-end
-local function showUI()
-    S.visible = true
-    Main.Visible = true
-    Floating.Visible = false
-end
-track(MinBtn.MouseButton1Click:Connect(hideUI))
-track(CloseBtn.MouseButton1Click:Connect(hideUI))
-track(Floating.MouseButton1Click:Connect(showUI))
-
--- Drag on PC and mobile by the header.
-do
-    local dragging, dragInput, dragStart, startPosition = false, nil, nil, nil
-    track(Header.InputBegan:Connect(function(input)
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1
-            and input.UserInputType ~= Enum.UserInputType.Touch then return end
-        dragging = true
-        dragInput = input
-        dragStart = input.Position
-        startPosition = Main.Position
-    end))
-    track(UIS.InputChanged:Connect(function(input)
-        if not dragging or not dragStart or not startPosition then return end
-        if input.UserInputType ~= Enum.UserInputType.MouseMovement
-            and input ~= dragInput then return end
-        local d = input.Position - dragStart
-        Main.Position = UDim2.new(startPosition.X.Scale, startPosition.X.Offset + d.X,
-            startPosition.Y.Scale, startPosition.Y.Offset + d.Y)
-    end))
-    track(UIS.InputEnded:Connect(function(input)
-        if input == dragInput or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end))
+local ok, Replion = pcall(require, moduleScript)
+if not ok or not Replion then
+    warn("[FAIL] Require Replion:", Replion)
+    return
 end
 
--- ========================= ENGINE (EXPERIMENTAL) =========================
-local REMOTE_NAMES = {
-    equip = "RE/EquipToolFromHotbar", charge = "RF/ChargeFishingRod",
-    minigame = "RF/RequestFishingMinigameStarted",
-    fishing = "RE/FishingCompleted", obtained = "RE/ObtainedNewFishNotification",
-    sell = "RF/SellAllItems"
-}
-local remotes = {}
-local function getNet()
-    local packages = RS:FindFirstChild("Packages")
-    local index = packages and packages:FindFirstChild("_Index")
-    local package = index and index:FindFirstChild("sleitnick_net@0.2.0")
-    if index and not package then
-        for _, child in ipairs(index:GetChildren()) do
-            if string.find(child.Name, "sleitnick_net", 1, true) then
-                package = child
-                break
-            end
-        end
-    end
-    return package and package:FindFirstChild("net") or nil
-end
-local function scanEngine()
-    local net = getNet()
-    local count = 0
-    for key, path in pairs(REMOTE_NAMES) do
-        remotes[key] = net and net:FindFirstChild(path) or nil
-        if remotes[key] then count = count + 1 end
-    end
-    S.scanCount = count
-    return count
-end
-local function checkEngine()
-    local missing = {}
-    for key, expected in pairs({equip="RemoteEvent", charge="RemoteFunction",
-        minigame="RemoteFunction", fishing="RemoteEvent"}) do
-        if not remotes[key] or not remotes[key]:IsA(expected) then
-            table.insert(missing, key)
-        end
-    end
-    return #missing == 0, table.concat(missing, ", ")
-end
-local function fire(key, ...)
-    local r = remotes[key]
-    if not r or not r:IsA("RemoteEvent") then return false, key .. " remote missing" end
-    return pcall(function(...) r:FireServer(...) end, ...)
-end
-local function invoke(key, ...)
-    local r = remotes[key]
-    if not r or not r:IsA("RemoteFunction") then return false, key .. " remote missing" end
-    local ok, result = pcall(function(...) return r:InvokeServer(...) end, ...)
-    if not ok then return false, result end
-    if result == false then return false, key .. " returned false" end
-    return true, result
-end
-local function stopFishing()
-    S.fishing = false
-    S.token = S.token + 1
-end
-local function stillFishing(token)
-    return S.alive and S.fishing and S.token == token
-end
-local function startFishing()
-    if S.fishing then return true end
-    scanEngine()
-    local ready, missing = checkEngine()
-    if not ready then
-        notify("Auto Fish gagal: remote belum lengkap (" .. missing .. ")")
-        return false
-    end
-    S.fishing = true
-    S.token = S.token + 1
-    local token = S.token
-    task.spawn(function()
-        local success, err = pcall(function()
-            while stillFishing(token) do
-                local ok, reason = fire("equip", 1)
-                if not ok then error("Equip: " .. tostring(reason)) end
-                task.wait(.12)
-                if not stillFishing(token) then break end
-                local chargeValue = 2
-                local minigameValue = -1.25
-                if S.protocol == "KIMS V1.3" then
-                    local stampOK, serverStamp = pcall(function()
-                        return workspace:GetServerTimeNow()
-                    end)
-                    chargeValue = stampOK and serverStamp or os.time()
-                    minigameValue = 1.2854545116425
-                end
-                ok, reason = invoke("charge", chargeValue)
-                if not ok then error("Charge: " .. tostring(reason)) end
-                task.wait(.09)
-                if not stillFishing(token) then break end
-                ok, reason = invoke("minigame", minigameValue, 1)
-                if not ok then error("Minigame: " .. tostring(reason)) end
-                S.casts = S.casts + 1
-                task.wait(S.fishDelay)
-                if not stillFishing(token) then break end
-                ok, reason = fire("fishing")
-                if not ok then error("Reel: " .. tostring(reason)) end
-                S.reels = S.reels + 1
-                task.wait(S.catchDelay)
-            end
-        end)
-        if token == S.token then
-            S.fishing = false
-            if not success then notify("Fishing berhenti: " .. tostring(err))
-            else notify("Fishing stopped | reel requests: " .. tostring(S.reels)) end
-            if render and S.activeTab == "FISHING" then render() end
-        end
-    end)
-    notify("Auto Fish eksperimental ON; cek hasil tangkapan di game")
-    return true
-end
+print("[PASS] Modul Replion")
 
--- ====================== DISCORD / FISH EVENTS ==========================
-local function executorRequest()
-    if type(request) == "function" then return request end
-    if type(http_request) == "function" then return http_request end
-    if type(syn) == "table" and type(syn.request) == "function" then return syn.request end
-    if type(http) == "table" and type(http.request) == "function" then return http.request end
-    return nil
-end
-local function validWebhook(url)
-    if type(url) ~= "string" then return false end
-    return url:match("^https://discord%.com/api/webhooks/%d+/[%w_%-]+/?$") ~= nil
-        or url:match("^https://discordapp%.com/api/webhooks/%d+/[%w_%-]+/?$") ~= nil
-end
-local function sendDiscord(embed)
-    if not validWebhook(S.webhookURL) then return false, "URL webhook belum valid" end
-    local req = executorRequest()
-    if not req then return false, "HTTP request API tidak tersedia di executor" end
-    local payload = {
-        username = "KIMS TECH | FISH ALERT",
-        allowed_mentions = {parse = {}},
-        embeds = {embed}
-    }
-    local ok, result = pcall(function()
-        return req({ Url = S.webhookURL, Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = Http:JSONEncode(payload) })
-    end)
-    if not ok then return false, tostring(result) end
-    if type(result) ~= "table" then return false, "HTTP response tidak tersedia" end
-    local status = tonumber(result.StatusCode or result.Status or result.status)
-    if status and status >= 200 and status < 300 then
-        S.webhookSent = S.webhookSent + 1
-        return true, "HTTP " .. status
-    end
-    return false, "HTTP " .. tostring(status or result.StatusMessage or "unknown")
-end
--- All rarity tiers are available for test. Unknown includes events whose
--- rarity metadata could not be resolved; it is NOT itself a real fish rarity.
-local RARITY_OPTIONS = {
-    "Common", "Uncommon", "Rare", "Epic", "Legendary",
-    "Mythic", "Secret", "Forgotten", "Unknown"
-}
-local RARITY_COLORS = {
-    Common=9807270, Uncommon=5763719, Rare=3447003,
-    Epic=10181046, Legendary=15844367, Mythic=11027200,
-    Secret=16711680, Forgotten=16753920, Unknown=8421504
-}
-local function normalizeRarity(v)
-    if v == nil then return "Unknown" end
-    local l = tostring(v):lower()
-    if l == "mythical" then return "Mythic" end
-    for k in pairs(RARITY_COLORS) do if k:lower() == l then return k end end
-    return "Unknown"
-end
-local ItemUtility, PlayerData
-local function loadItemUtility()
-    if ItemUtility then return ItemUtility end
-    local shared = RS:FindFirstChild("Shared")
-    local module = shared and shared:FindFirstChild("ItemUtility")
-    if module and module:IsA("ModuleScript") then
-        local ok, value = pcall(require, module)
-        if ok then ItemUtility = value end
-    end
-    return ItemUtility
-end
-local function fishInfo(fishId, weightData, itemData)
-    local inv = type(itemData) == "table" and itemData.InventoryItem or nil
-    local meta = type(inv) == "table" and inv.Metadata or nil
-    local id = fishId or (type(inv) == "table" and inv.Id)
-    local name, rarity = "Fish ID " .. tostring(id or "?"), "Unknown"
-    local util = loadItemUtility()
-    if util and id then
-        local ok, result = pcall(function() return util:GetItemData(id) end)
-        if ok and type(result) == "table" then
-            local data = type(result.Data) == "table" and result.Data or result
-            name = tostring(data.Name or data.DisplayName or name)
-            rarity = normalizeRarity(data.Rarity or data.Tier)
-        end
-    end
-    local weight = (type(weightData) == "table" and weightData.Weight)
-        or (type(meta) == "table" and meta.Weight)
-    local variant = (type(weightData) == "table" and weightData.VariantId)
-        or (type(meta) == "table" and meta.VariantId)
-    return name, rarity, weight, variant
-end
-local function queueDiscord(embed)
-    if #S.webhookQueue >= 25 then table.remove(S.webhookQueue, 1) end
-    table.insert(S.webhookQueue, embed)
-    if S.sending then return end
-    S.sending = true
-    task.spawn(function()
-        while S.alive and S.autoAlerts and #S.webhookQueue > 0 do
-            local delayS = math.max(0, 2.3 - (os.clock() - S.lastSentAt))
-            if delayS > 0 then task.wait(delayS) end
-            if not S.alive or not S.autoAlerts then break end
-            local item = table.remove(S.webhookQueue, 1)
-            S.lastSentAt = os.clock()
-            local ok, why = sendDiscord(item)
-            if not ok then notify("Webhook gagal: " .. tostring(why)) end
-        end
-        S.sending = false
-    end)
-end
-local function onNewFish(id, weightData, itemData)
-    if not S.alive or not S.autoAlerts then return end
-    S.webhookEvents = S.webhookEvents + 1
-    local fish, rarity, weight, variant = fishInfo(id, weightData, itemData)
-    S.lastEvent = fish .. " | " .. rarity .. " | VariantId " .. tostring(variant or "-")
-    if S.filters[rarity] ~= true then
-        S.filteredEvents = S.filteredEvents + 1
-        return
-    end
-    local key = table.concat({tostring(id),tostring(weight),tostring(variant)},":")
-    local now = os.clock()
-    if S.recentEvents[key] and now-S.recentEvents[key] < 3.5 then return end
-    S.recentEvents[key] = now
-    queueDiscord({
-        title = "KIMS TECH | Fish Caught", color = RARITY_COLORS[rarity] or 8421504,
-        fields = {
-            {name="Player", value=tostring(Player.Name), inline=true},
-            {name="Fish", value=tostring(fish), inline=true},
-            {name="Rarity", value=tostring(rarity), inline=true},
-            {name="Weight (raw)", value=tostring(weight or "N/A"), inline=true},
-            {name="Variant ID", value=tostring(variant or "N/A"), inline=true},
-            {name="Fish ID", value=tostring(id or "N/A"), inline=true}
-        },
-        footer = {text="KIMS TECH | Custom V3.1 Rarity Test"},
-        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-    })
-end
-local function stopAlerts()
-    S.autoAlerts = false
-    S.webhookQueue = {}
-    if S.fishConnection then S.fishConnection:Disconnect() S.fishConnection = nil end
-end
-local function startAlerts()
-    if not validWebhook(S.webhookURL) then notify("Isi Discord webhook URL dulu") return false end
-    if not executorRequest() then notify("Executor tidak mendukung request HTTP") return false end
-    scanEngine()
-    if not remotes.obtained or not remotes.obtained:IsA("RemoteEvent") then
-        notify("Fish obtained event belum ditemukan")
-        return false
-    end
-    stopAlerts()
-    S.autoAlerts = true
-    S.fishConnection = remotes.obtained.OnClientEvent:Connect(onNewFish)
-    notify("Fish Alerts ON | mengikuti filter rarity yang aktif")
-    return true
-end
-
--- ====================== READ ONLY INVENTORY ============================
-local function inventoryScan()
-    local ok, err = pcall(function()
-        if not PlayerData then
-            local packages = RS:FindFirstChild("Packages")
-            local module = packages and packages:FindFirstChild("Replion")
-            if not module then error("Replion module missing") end
-            local replion = require(module)
-            if not replion.Client then error("Replion Client missing") end
-            PlayerData = replion.Client:WaitReplion("Data")
-        end
-        local inventory = PlayerData:GetExpect("Inventory")
-        local items = inventory and inventory.Items
-        if type(items) ~= "table" then error("Inventory.Items unavailable") end
-        local count, byRarity = 0, {}
-        for _, item in pairs(items) do
-            if type(item) == "table" then
-                count = count + 1
-                local tier = "Unknown"
-                local util = loadItemUtility()
-                if util and item.Id then
-                    local valid, result = pcall(function()
-                        return util:GetItemData(item.Id)
-                    end)
-                    if valid and type(result) == "table" then
-                        local data = type(result.Data) == "table" and result.Data or result
-                        tier = normalizeRarity(data.Rarity or data.Tier)
-                    end
-                end
-                byRarity[tier] = (byRarity[tier] or 0) + 1
-            end
-        end
-        S.inventoryDetails = byRarity
-        local parts = {}
-        for k, v in pairs(byRarity) do table.insert(parts, k .. ": " .. v) end
-        table.sort(parts)
-        S.inventorySummary = "Items: " .. count .. " | " .. table.concat(parts, " | ")
-    end)
-    if not ok then
-        S.inventorySummary = "Scan gagal: " .. tostring(err)
-    end
-    notify(S.inventorySummary)
-    if S.activeTab == "INVENTORY" and render then render() end
-end
-
--- ======================= CUSTOM COMPONENTS ===========================
-local TAB_DEFS = {
-    {key="HOME", icon="◆", title="Overview"},
-    {key="FISHING", icon="◉", title="Fishing"},
-    {key="TELEPORT", icon="◎", title="Teleport"},
-    {key="WEBHOOK", icon="◇", title="Webhook"},
-    {key="INVENTORY", icon="▣", title="Inventory"},
-    {key="SETTINGS", icon="⚙", title="Settings"}
-}
-local navButtons = {}
-for i, def in ipairs(TAB_DEFS) do
-    local b = new("TextButton", Nav, {
-        Name = "Nav_"..def.key, LayoutOrder = i,
-        Text = (isSmall and "" or def.icon .. "  ") .. def.title,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Font = Enum.Font.GothamBold, TextSize = isSmall and 10 or 12,
-        TextColor3 = C.muted, BackgroundColor3 = C.raised,
-        Size = UDim2.new(1, 0, 0, 42), BorderSizePixel = 0,
-        AutoButtonColor = true
-    })
-    corner(b, 10)
-    new("UIPadding", b, {PaddingLeft=UDim.new(0, 9)})
-    navButtons[def.key] = b
-    track(b.MouseButton1Click:Connect(function()
-        S.activeTab = def.key
-        if render then render() end
-    end))
-end
-
-local contentOrder = 0
-local function rootPanel(height, bg)
-    contentOrder = contentOrder + 1
-    local p = new("Frame", Body, {
-        BackgroundColor3 = bg or C.panel,
-        BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, height),
-        LayoutOrder = contentOrder
-    })
-    corner(p, 12); stroke(p, C.border, 1, .3)
-    return p
-end
-local function titleBlock(title, desc)
-    local p = rootPanel(desc and 66 or 46, C.bg)
-    p.BackgroundTransparency = 1
-    local a = label(p, title, 18, C.white, true)
-    a.Position = UDim2.fromOffset(4, 2)
-    a.Size = UDim2.new(1, -8, 0, 29)
-    if desc then
-        local d = label(p, desc, 11, C.muted)
-        d.Position = UDim2.fromOffset(4, 31)
-        d.Size = UDim2.new(1, -8, 0, 32)
-    end
-end
-local function infoCard(head, body, highlight)
-    local h = rootPanel(78)
-    local t = label(h, head, 12, highlight and C.cyan or C.gold, true)
-    t.Position = UDim2.fromOffset(13, 11)
-    t.Size = UDim2.new(1, -26, 0, 21)
-    local b = label(h, body, 12, C.white)
-    b.Position = UDim2.fromOffset(13, 33)
-    b.Size = UDim2.new(1, -26, 0, 35)
-end
-local function action(title, desc, callback, destructive)
-    local p = rootPanel(67)
-    local text = label(p, title, 13, destructive and C.red or C.white, true)
-    text.Position = UDim2.fromOffset(12, 8)
-    text.Size = UDim2.new(1, -100, 0, 23)
-    local cap = label(p, desc, 10, C.muted)
-    cap.Position = UDim2.fromOffset(12, 30)
-    cap.Size = UDim2.new(1, -100, 0, 31)
-    local btn = new("TextButton", p, {
-        Text="RUN", Font=Enum.Font.GothamBold, TextSize=11, TextColor3=C.bg,
-        BackgroundColor3=destructive and C.red or C.cyan,
-        AnchorPoint=Vector2.new(1,.5), Position=UDim2.new(1,-12,.5,0),
-        Size=UDim2.fromOffset(70,31), BorderSizePixel=0
-    })
-    corner(btn,8)
-    btn.MouseButton1Click:Connect(function()
-        local ok, err = pcall(callback)
-        if not ok then notify("Error: "..tostring(err)) end
-    end)
-end
-local function toggle(title, desc, current, cb)
-    local p = rootPanel(68)
-    local txt = label(p, title, 13, C.white, true)
-    txt.Position = UDim2.fromOffset(12, 8)
-    txt.Size = UDim2.new(1, -91, 0, 24)
-    local sub = label(p, desc, 10, C.muted)
-    sub.Position = UDim2.fromOffset(12, 31)
-    sub.Size = UDim2.new(1, -94, 0, 31)
-    local b = new("TextButton",p, {
-        Text=current and "ON" or "OFF", Font=Enum.Font.GothamBold,
-        TextSize=11, TextColor3=C.white,
-        BackgroundColor3=current and C.green or C.raised2,
-        AnchorPoint=Vector2.new(1,.5),
-        Position=UDim2.new(1,-12,.5,0), Size=UDim2.fromOffset(66,31), BorderSizePixel=0
-    })
-    corner(b,10)
-    b.MouseButton1Click:Connect(function()
-        local ok, err = pcall(function() cb(not current) end)
-        if not ok then notify("Toggle error: "..tostring(err)) end
-        if render then render() end
-    end)
-end
-local function stepper(title, key, step, minVal, maxVal)
-    local p = rootPanel(62)
-    local t = label(p, title, 12, C.white, true)
-    t.Position = UDim2.fromOffset(11, 15)
-    t.Size = UDim2.new(1, -132, 0, 32)
-    local value = label(p, tostring(S[key]).."s", 12, C.cyan, true)
-    value.TextXAlignment = Enum.TextXAlignment.Center
-    value.AnchorPoint=Vector2.new(1,.5)
-    value.Position=UDim2.new(1,-44,.5,0)
-    value.Size=UDim2.fromOffset(54,32)
-    for i,dir in ipairs({-1,1}) do
-        local b = new("TextButton",p,{
-            Text=dir==-1 and "−" or "+", Font=Enum.Font.GothamBold,
-            TextSize=19, TextColor3=C.white, BackgroundColor3=C.raised2,
-            Position=UDim2.new(1, dir==-1 and -131 or -40, .5, -16),
-            Size=UDim2.fromOffset(33,32), BorderSizePixel=0
-        })
-        corner(b,8)
-        b.MouseButton1Click:Connect(function()
-            S[key] = math.floor(math.clamp(S[key]+step*dir,minVal,maxVal)*10+.5)/10
-            if render then render() end
-        end)
-    end
-end
-local function secretInput(title, placeholder)
-    local p = rootPanel(106)
-    local t = label(p,title,12,C.white,true)
-    t.Position=UDim2.fromOffset(12,7)
-    t.Size=UDim2.new(1,-24,0,25)
-    local field = new("TextBox",p,{
-        Text="", PlaceholderText=placeholder,
-        PlaceholderColor3=C.muted, TextColor3=C.white,
-        BackgroundColor3=C.raised, Font=Enum.Font.Gotham,
-        TextSize=12, TextXAlignment=Enum.TextXAlignment.Left,
-        ClearTextOnFocus=false, TextTruncate=Enum.TextTruncate.AtEnd,
-        Position=UDim2.fromOffset(12,34), Size=UDim2.new(1,-24,0,34),
-        BorderSizePixel=0
-    })
-    corner(field,8)
-    new("UIPadding",field,{PaddingLeft=UDim.new(0,9),PaddingRight=UDim.new(0,9)})
-    local status = label(p, S.webhookURL~="" and "URL tersimpan dalam memori (tidak ditampilkan)" or "Belum ada URL", 10,C.muted)
-    status.Position=UDim2.fromOffset(12,76)
-    status.Size=UDim2.new(1,-24,0,20)
-    field.FocusLost:Connect(function()
-        local v = field.Text:match("^%s*(.-)%s*$")
-        field.Text=""  -- never show the secret on screen after editing
-        if v=="" then return end
-        if validWebhook(v) then
-            S.webhookURL=v
-            notify("Webhook URL diterima untuk sesi ini")
-        else
-            notify("URL webhook Discord tidak valid")
-        end
-        if render then render() end
-    end)
-end
-
-render = function()
-    if not S.alive then return end
-    for _, child in ipairs(Body:GetChildren()) do
-        if child:IsA("GuiObject") then child:Destroy() end
-    end
-    contentOrder = 0
-    Body.CanvasPosition = Vector2.new(0,0)
-    for key,b in pairs(navButtons) do
-        local on = S.activeTab == key
-        b.BackgroundColor3 = on and C.purple or C.raised
-        b.TextColor3 = on and C.white or C.muted
-    end
-    if S.activeTab == "HOME" then
-        titleBlock("COMMAND CENTER", "KIMS TECH / Fish It / Custom engine diagnostics")
-        infoCard("ENGINE STATUS", "Found "..S.scanCount.." / 6 remotes. Ditemukan bukan berarti accepted.", true)
-        infoCard("FISHING STATUS", (S.fishing and "RUNNING" or "STOPPED").."  |  Cast "..S.casts.."  |  Reel "..S.reels)
-        action("SCAN FISH IT ENGINE", "Periksa remote casting, reeling, sell dan event ikan", function()
-            local n=scanEngine()
-            local ready,missing=checkEngine()
-            notify("Remotes "..n.."/6 | Fishing "..(ready and "found (UNVERIFIED)" or "missing: "..missing))
-            render()
-        end)
-        action("SHOW LAST STATUS", "Lihat log ringkas terakhir", function() notify(S.status) end)
-        infoCard("EXPERIMENTAL BUILD", "UI buatan KIMS. Tidak terhubung Rayfield. Gunakan test account.")
-
-    elseif S.activeTab == "FISHING" then
-        titleBlock("FISHING ENGINE", "Remote protocol from archived KIMS V1.3; not proven live")
-        toggle("AUTO FISH", "Menjalankan satu cast lalu reel per siklus", S.fishing, function(v)
-            if v then startFishing() else stopFishing();notify("Auto Fish OFF") end
-        end)
-        action("CAST PROTOCOL: "..S.protocol, "Ganti bila perlu untuk uji; tetap eksperimental", function()
-            if S.fishing then stopFishing(); notify("Auto Fish OFF untuk ganti protocol") end
-            S.protocol = S.protocol=="KIMS V1.3" and "Draa reference" or "KIMS V1.3"
-            notify("Protocol: "..S.protocol)
-            render()
-        end)
-        stepper("FISH DELAY", "fishDelay", .5, 1, 10)
-        stepper("CATCH DELAY", "catchDelay", .1, .3, 5)
-        action("STOP AUTO FISH", "Hentikan proses mancing langsung", function()
-            stopFishing(); notify("Auto Fish stopped"); render()
-        end,true)
-        infoCard("CAUTION", "Reel request berhasil tidak membuktikan ikan tertangkap.")
-
-    elseif S.activeTab == "TELEPORT" then
-        titleBlock("LOCATION SAVER", "Lokasi tersimpan sementara selama sesi ini")
-        action("SAVE CURRENT POSITION", "Simpan posisi karakter saat ini", function()
-            local root=Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-            if not root then notify("Character root tidak ditemukan") return end
-            S.savedPosition=root.CFrame; notify("Posisi berhasil disimpan")
-        end)
-        action("TELEPORT TO SAVED", "Kembali ke posisi yang tersimpan", function()
-            local root=Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-            if not root or not S.savedPosition then notify("Simpan posisi dulu") return end
-            local ok,err=pcall(function() root.CFrame=S.savedPosition end)
-            notify(ok and "Teleport requested" or ("Teleport error: "..tostring(err)))
-        end)
-        infoCard("NOTE", "Game dapat mengoreksi posisi karakter dari server.")
-
-    elseif S.activeTab == "WEBHOOK" then
-        titleBlock("DISCORD FISH ALERT", "Kirim event ikan yang memenuhi filter rarity")
-        secretInput("DISCORD WEBHOOK URL", "Tempel URL lalu tekan Enter / selesai")
-        toggle("AUTO FISH ALERT", "Listen RE/ObtainedNewFishNotification", S.autoAlerts, function(v)
-            if v then startAlerts() else stopAlerts(); notify("Fish Alert OFF") end
-        end)
-        infoCard("TEST MODE V3.1", "Semua rarity ON, termasuk Unknown jika rarity belum terbaca.", true)
-        action("ENABLE ALL RARITIES", "Aktifkan seluruh filter untuk pengujian tangkapan biasa", function()
-            for _, rarity in ipairs(RARITY_OPTIONS) do S.filters[rarity] = true end
-            notify("Semua rarity aktif untuk TEST")
-            render()
-        end)
-        action("RESTORE SECRET / FORGOTTEN", "Kembalikan filter langka saja dan matikan Unknown", function()
-            for _, rarity in ipairs(RARITY_OPTIONS) do
-                S.filters[rarity] = (rarity == "Secret" or rarity == "Forgotten")
-            end
-            notify("Filter rare-only dipulihkan")
-            render()
-        end)
-        for _, rarity in ipairs(RARITY_OPTIONS) do
-            local key = rarity
-            local description = rarity == "Unknown"
-                and "DEBUG: event yang rarity-nya belum terbaca"
-                or ("Kirim event dengan rarity " .. rarity)
-            toggle("FILTER " .. key:upper(), description, S.filters[key], function(v)
-                S.filters[key] = v
-            end)
-        end
-        action("TEST DISCORD WEBHOOK", "Kirim pesan test tanpa harus menangkap ikan", function()
-            task.spawn(function()
-                local ok,reason=sendDiscord({
-                    title="KIMS TECH | Webhook Test", color=65280,
-                    description="KIMS SCRIPT CUSTOM V3.1: test manual (bukan ikan tertangkap).",
-                    fields={{name="Player",value=tostring(Player.Name),inline=true}},
-                    footer={text="KIMS TECH"},
-                    timestamp=os.date("!%Y-%m-%dT%H:%M:%SZ")
-                })
-                notify(ok and ("Webhook sent: "..reason) or ("Webhook failed: "..reason))
-            end)
-        end)
-        action("CHECK LAST FISH EVENT", "Caught events "..S.webhookEvents.." | Filtered "..S.filteredEvents.." | HTTP sent "..S.webhookSent, function()
-            notify(S.lastEvent)
-        end)
-        action("CLEAR WEBHOOK URL", "Hapus URL dari memori dan matikan alert", function()
-            stopAlerts(); S.webhookURL="";notify("Webhook dihapus dari memori");render()
-        end,true)
-        infoCard("PRIVACY", "Webhook URL hanya disimpan di RAM. Jangan upload URL ke GitHub.")
-
-    elseif S.activeTab == "INVENTORY" then
-        titleBlock("INVENTORY SCANNER", "Read-only; bukan auto sell atau auto trade")
-        infoCard("LAST INVENTORY SCAN", S.inventorySummary, true)
-        action("SCAN INVENTORY", "Baca daftar item melalui Replion bila tersedia", function()
-            task.spawn(inventoryScan)
-        end)
-        action("SHOW SUMMARY IN CONSOLE", "Lihat data rarity dari scan terakhir", function()
-            print("[KIMS V3 INVENTORY] "..S.inventorySummary)
-            notify("Summary ditulis ke console")
-        end)
-        infoCard("NOTE", "Hasil bergantung pada struktur Inventory dan ItemUtility versi game.")
-
-    elseif S.activeTab == "SETTINGS" then
-        titleBlock("KIMS SETTINGS", "Tampilan mandiri • ringan • tidak butuh Rayfield")
-        toggle("LOW GRAPHICS: SHADOWS", "Matikan bayangan (dipulihkan saat OFF)", S.lowGraphics, function(v)
-            local ok,err=pcall(function()
-                Lighting.GlobalShadows=v and false or S.originalShadows
-            end)
-            if ok then S.lowGraphics=v;notify("Shadows "..(v and "OFF" or "RESTORED"))
-            else notify("Graphics error: "..tostring(err)) end
-        end)
-        action("MINIMIZE TO KIMS BUBBLE", "Sembunyikan window, tampilkan tombol K", hideUI)
-        action("STOP ALL KIMS TASKS", "Matikan fishing, webhook dan GUI", function()
-            ENV.KIMS_CUSTOM_V3_STOP()
-        end,true)
-        infoCard("ABOUT", "KIMS CUSTOM V3.1 / Powered by KIMS TECH / Rarity Test")
-    end
-end
-
-ENV.KIMS_CUSTOM_V3_STOP = function()
-    if not S.alive then return end
-    S.alive=false
-    stopFishing()
-    stopAlerts()
-    if S.lowGraphics then pcall(function() Lighting.GlobalShadows=S.originalShadows end) end
-    for _,conn in ipairs(S.connections) do pcall(function() conn:Disconnect() end) end
-    pcall(function() Screen:Destroy() end)
-    print("[KIMS V3] All tasks stopped")
-end
-
--- Dedicated STOP entrypoint and cleanup for repeated executes.
-local ok, err = pcall(function()
-    scanEngine()
-    render()
+local dataOK, Data = pcall(function()
+    return Replion.Client:WaitReplion("Data", 12)
 end)
-if not ok then
-    warn("[KIMS V3] UI initialization failed: "..tostring(err))
-    ENV.KIMS_CUSTOM_V3_STOP()
-else
-    notify("KIMS CUSTOM V3.1 loaded | ALL RARITIES")
+
+if not dataOK or not Data then
+    warn("[FAIL] Channel Data belum tersedia:", Data)
+    return
 end
+
+print("[PASS] Channel Data")
+
+local rootOK, root = pcall(function()
+    return Data:Get()
+end)
+
+if not rootOK or typeof(root) ~= "table" then
+    warn("[FAIL] Root data tidak bisa dibaca")
+    return
+end
+
+print("[PASS] Root data terbaca")
+
+local equipOK, equip = pcall(function()
+    return Data:Get("EquippedId")
+end)
+
+if equipOK and equip ~= nil then
+    print("[PASS] EquippedId terbaca")
+else
+    print("[INFO] EquippedId belum ditemukan")
+end
+
+local inventoryOK, inventory = pcall(function()
+    return Data:Get("Inventory")
+end)
+
+if inventoryOK and typeof(inventory) == "table" then
+    print("[PASS] Inventory terbaca")
+else
+    print("[INFO] Inventory belum ditemukan")
+end
+
+-- Cari nama field statistik, tanpa dump
+-- seluruh data pribadi pemain.
+
+local keywords = {
+    "caught", "catch", "rarest",
+    "stat", "level", "coin",
+    "money", "fishcount",
+    "fishcaught"
+}
+
+local function isStatKey(key)
+    local name = tostring(key):lower()
+    for _, word in ipairs(keywords) do
+        if name:find(word, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local found = 0
+
+local function inspect(tbl, prefix, depth)
+    if depth > 2 then return end
+
+    local scanned = 0
+
+    for key, value in pairs(tbl) do
+        scanned += 1
+        if scanned > 500 then break end
+
+        local name = tostring(key)
+        local path = prefix == ""
+            and name or (prefix .. "." .. name)
+
+        if isStatKey(name) then
+            found += 1
+
+            if typeof(value) == "number"
+                or typeof(value) == "boolean" then
+                print("[STAT]", path, "=", value)
+            elseif typeof(value) == "string" then
+                print("[STAT]", path,
+                    "= string (" .. #value .. " chars)")
+            else
+                print("[STAT]", path,
+                    "=", typeof(value))
+            end
+        end
+
+        local lower = name:lower()
+        local skip = lower == "items"
+            or lower == "inventory"
+
+        if typeof(value) == "table"
+            and depth < 2 and not skip then
+            inspect(value, path, depth + 1)
+        end
+    end
+end
+
+print("------- SCANNING STAT KEYS -------")
+inspect(root, "", 0)
+
+print("------- HASIL -------")
+
+if found > 0 then
+    print("[KIMS] DITEMUKAN", found,
+        "FIELD KANDIDAT STAT AKUN")
+else
+    warn("[KIMS] BELUM ADA FIELD STAT YANG COCOK")
+end
+
+print("========== TEST SELESAI ==========")
