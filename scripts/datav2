@@ -1,150 +1,710 @@
+-- KIMS SCRIPT V1.0.0 | 24 November 2026
+-- Replace the CONTENTS of scripts/datav2 with this complete file.
+-- Based on the owner's KIMS STAT AKUN V1. UI/lifecycle code is implemented
+-- for KIMS using the readable hub patterns documented in PANDUAN_KIMS.txt.
+-- Reads client-visible data. No external UI library or key service required.
 
--- KIMS STAT AKUN V1
--- READ ONLY | NO REMOTES | NO WEBHOOK
+local VERSION = "1.0.0"
+local GLOBAL_KEY = "__KIMS_SCRIPT_APP_V1"
+local ENV = _G
+if type(getgenv) == "function" then
+    local ok, value = pcall(getgenv)
+    if ok and type(value) == "table" then ENV = value end
+end
 
-local RS = game:GetService("ReplicatedStorage")
+local previous = ENV[GLOBAL_KEY]
+if type(previous) == "table" and previous.Alive then
+    if type(previous.Show) == "function" then pcall(previous.Show, previous) end
+    print("[KIMS] Panel sudah aktif; panel yang sama dibuka kembali.")
+    return previous
+end
+
+local App = {Alive = true, Connections = {}, Logs = {}, Rows = {}, Inventory = {},
+    RootKeys = {}, Source = "Menunggu scan", ModuleState = "Belum diperiksa",
+    ChannelState = "Belum diperiksa", Busy = false, AutoRefresh = true,
+    Interval = 5, LastScan = "Belum", Equipped = "Belum terbaca", Truncated = false}
+ENV[GLOBAL_KEY] = App
+
 local Players = game:GetService("Players")
-
-print("========== KIMS STAT TEST V1 ==========")
-
+local RS = game:GetService("ReplicatedStorage")
+local Http = game:GetService("HttpService")
+local UIS = game:GetService("UserInputService")
+local Tween = game:GetService("TweenService")
 local player = Players.LocalPlayer
-if not player then
-    warn("[FAIL] LocalPlayer tidak tersedia")
-    return
+local CONFIG_PATH = "KIMS_SCRIPT/settings_v1.json"
+local clipboard = setclipboard or toclipboard or ENV.setclipboard or ENV.toclipboard
+local readFile = readfile or ENV.readfile
+local writeFile = writefile or ENV.writefile
+local isFile = isfile or ENV.isfile
+local makeFolder = makefolder or ENV.makefolder
+
+local function clean(value, limit)
+    local result = (value == nil and "" or tostring(value)):gsub("[%c]", " ")
+    return result:sub(1, limit or 140)
 end
 
-print("[PASS] LocalPlayer")
-
-local packages = RS:FindFirstChild("Packages")
-local moduleScript = packages
-    and packages:FindFirstChild("Replion")
-
-if not moduleScript then
-    warn("[FAIL] Modul Replion tidak ditemukan")
-    return
+local function disconnect(connection)
+    if connection then pcall(function() connection:Disconnect() end) end
 end
 
-local ok, Replion = pcall(require, moduleScript)
-if not ok or not Replion then
-    warn("[FAIL] Require Replion:", Replion)
-    return
+function App:Track(connection)
+    self.Connections[#self.Connections + 1] = connection
+    return connection
 end
 
-print("[PASS] Modul Replion")
-
-local dataOK, Data = pcall(function()
-    return Replion.Client:WaitReplion("Data", 12)
-end)
-
-if not dataOK or not Data then
-    warn("[FAIL] Channel Data belum tersedia:", Data)
-    return
+function App:Log(level, message)
+    local line = os.date("%H:%M:%S") .. " [" .. level .. "] " .. clean(message, 240)
+    self.Logs[#self.Logs + 1] = line
+    if #self.Logs > 45 then table.remove(self.Logs, 1) end
+    print("[KIMS] " .. line)
 end
 
-print("[PASS] Channel Data")
-
-local rootOK, root = pcall(function()
-    return Data:Get()
-end)
-
-if not rootOK or typeof(root) ~= "table" then
-    warn("[FAIL] Root data tidak bisa dibaca")
-    return
+function App:Toast(message)
+    if self.ToastLabel and self.Alive then
+        self.ToastLabel.Text = clean(message, 200)
+        self.ToastLabel.Visible = true
+        self.ToastSerial = (self.ToastSerial or 0) + 1
+        local serial = self.ToastSerial
+        task.delay(4, function()
+            if self.Alive and serial == self.ToastSerial then self.ToastLabel.Visible = false end
+        end)
+    end
 end
 
-print("[PASS] Root data terbaca")
-
-local equipOK, equip = pcall(function()
-    return Data:Get("EquippedId")
-end)
-
-if equipOK and equip ~= nil then
-    print("[PASS] EquippedId terbaca")
-else
-    print("[INFO] EquippedId belum ditemukan")
+function App:SaveSettings()
+    if type(writeFile) ~= "function" or type(makeFolder) ~= "function" then
+        return false, "Executor tidak menyediakan penyimpanan file."
+    end
+    local ok = pcall(function()
+        pcall(makeFolder, "KIMS_SCRIPT")
+        writeFile(CONFIG_PATH, Http:JSONEncode({Version = 1,
+            AutoRefresh = self.AutoRefresh, Interval = self.Interval}))
+    end)
+    return ok, ok and "Preferensi tersimpan." or "Preferensi belum berhasil disimpan."
 end
 
-local inventoryOK, inventory = pcall(function()
-    return Data:Get("Inventory")
-end)
-
-if inventoryOK and typeof(inventory) == "table" then
-    print("[PASS] Inventory terbaca")
-else
-    print("[INFO] Inventory belum ditemukan")
+local function loadSettings()
+    if type(readFile) ~= "function" or type(isFile) ~= "function" then return end
+    local ok, cfg = pcall(function()
+        if not isFile(CONFIG_PATH) then return nil end
+        return Http:JSONDecode(readFile(CONFIG_PATH))
+    end)
+    if ok and type(cfg) == "table" then
+        if type(cfg.AutoRefresh) == "boolean" then App.AutoRefresh = cfg.AutoRefresh end
+        if cfg.Interval == 3 or cfg.Interval == 5 or cfg.Interval == 10 then App.Interval = cfg.Interval end
+    end
 end
 
--- Cari nama field statistik, tanpa dump
--- seluruh data pribadi pemain.
+local KEYWORDS = {"caught", "catch", "rarest", "stat", "level", "coin", "money",
+    "fishcount", "fishcaught", "luck", "xp", "experience", "gem", "diamond"}
+local PRIVATE = {password = true, cookie = true, roblosecurity = true,
+    authorization = true, accesstoken = true, refreshtoken = true, apikey = true,
+    scriptkey = true, webhook = true, webhookurl = true, email = true,
+    phone = true, phonenumber = true, sessionid = true, token = true}
 
-local keywords = {
-    "caught", "catch", "rarest",
-    "stat", "level", "coin",
-    "money", "fishcount",
-    "fishcaught"
-}
-
-local function isStatKey(key)
+local function normalized(key) return tostring(key):lower():gsub("[^%w]", "") end
+local function isPrivate(key) return PRIVATE[normalized(key)] == true end
+local function isStat(key)
     local name = tostring(key):lower()
-    for _, word in ipairs(keywords) do
-        if name:find(word, 1, true) then
-            return true
-        end
+    for _, word in ipairs(KEYWORDS) do
+        if name:find(word, 1, true) then return true end
     end
     return false
 end
 
-local found = 0
+local function sortedKeys(tbl)
+    local keys, truncated = {}, false
+    for key in pairs(tbl) do
+        if type(key) == "string" or type(key) == "number" then
+            keys[#keys + 1] = key
+            if #keys >= 500 then truncated = true; break end
+        end
+    end
+    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+    return keys, truncated
+end
 
-local function inspect(tbl, prefix, depth)
-    if depth > 2 then return end
+local function displayValue(value)
+    if type(value) == "number" or type(value) == "boolean" then return tostring(value) end
+    if type(value) == "string" then return "string (" .. #value .. " karakter)" end
+    return typeof(value)
+end
 
-    local scanned = 0
-
-    for key, value in pairs(tbl) do
-        scanned += 1
-        if scanned > 500 then break end
-
-        local name = tostring(key)
-        local path = prefix == ""
-            and name or (prefix .. "." .. name)
-
-        if isStatKey(name) then
-            found += 1
-
-            if typeof(value) == "number"
-                or typeof(value) == "boolean" then
-                print("[STAT]", path, "=", value)
-            elseif typeof(value) == "string" then
-                print("[STAT]", path,
-                    "= string (" .. #value .. " chars)")
-            else
-                print("[STAT]", path,
-                    "=", typeof(value))
+-- This builds a bounded report, never a full player-data dump.
+local function collectStats(root)
+    local rows, seen, budget, truncated = {}, {}, 0, false
+    local function walk(tbl, prefix, depth, inherited)
+        if depth > 3 or seen[tbl] then return end
+        seen[tbl] = true
+        local keys, capped = sortedKeys(tbl)
+        truncated = truncated or capped
+        for _, key in ipairs(keys) do
+            budget = budget + 1
+            if budget > 1200 or #rows >= 150 then truncated = true; return end
+            if not isPrivate(key) then
+                local value, name = tbl[key], clean(key, 80)
+                local path = prefix == "" and name or (prefix .. "." .. name)
+                local candidate = isStat(name)
+                if candidate or (inherited and (type(value) == "number" or type(value) == "boolean")) then
+                    rows[#rows + 1] = {Path = path, Value = displayValue(value), Kind = typeof(value)}
+                end
+                local low = normalized(name)
+                if type(value) == "table" and low ~= "inventory" and low ~= "items" then
+                    walk(value, path, depth + 1, inherited or candidate)
+                end
             end
         end
+    end
+    walk(root, "", 0, false)
+    table.sort(rows, function(a, b) return a.Path < b.Path end)
+    return rows, truncated
+end
 
-        local lower = name:lower()
-        local skip = lower == "items"
-            or lower == "inventory"
+local function entryCount(tbl)
+    local n = 0
+    for _ in pairs(tbl) do n = n + 1; if n >= 10000 then return "10000+" end end
+    return tostring(n)
+end
 
-        if typeof(value) == "table"
-            and depth < 2 and not skip then
-            inspect(value, path, depth + 1)
+local function summarizeInventory(root)
+    local result = {}
+    local inventory = root.Inventory
+    if type(inventory) ~= "table" then return result, "Inventory belum terbaca" end
+    local keys, capped = sortedKeys(inventory)
+    for _, key in ipairs(keys) do
+        if #result >= 100 then capped = true; break end
+        if not isPrivate(key) then
+            local value = inventory[key]
+            local summary = displayValue(value)
+            if type(value) == "table" then
+                local parts = {}
+                for _, field in ipairs({"Name", "Id", "ID", "Type", "Rarity", "Variant", "Amount", "Quantity"}) do
+                    local fieldValue = rawget(value, field)
+                    if type(fieldValue) == "number" or type(fieldValue) == "boolean" or type(fieldValue) == "string" then
+                        parts[#parts + 1] = field .. "=" .. clean(fieldValue, 48)
+                    end
+                end
+                summary = #parts > 0 and table.concat(parts, " | ") or (entryCount(value) .. " entri di dalam tabel")
+            end
+            result[#result + 1] = {Path = "Inventory." .. clean(key, 90), Value = summary, Kind = typeof(value)}
         end
+    end
+    return result, "Inventory: " .. entryCount(inventory) .. " entri tingkat atas" .. (capped and " (tampilan dibatasi)" or "")
+end
+
+local function findModule()
+    local packages = RS:FindFirstChild("Packages")
+    local candidate = packages and packages:FindFirstChild("Replion", true)
+    if candidate and candidate:IsA("ModuleScript") then return candidate end
+    candidate = RS:FindFirstChild("Replion")
+    if candidate and candidate:IsA("ModuleScript") then return candidate end
+    return nil
+end
+
+local function rootFromData(data)
+    if data.Destroyed then return nil end
+    local ok, root = pcall(function() return data:Get() end)
+    if ok and type(root) == "table" then return root end
+    if type(data.Data) == "table" then return data.Data end
+    return nil
+end
+
+local function fallbackStats()
+    local rows = {}
+    local leaderstats = player:FindFirstChild("leaderstats")
+    if leaderstats then
+        for i, child in ipairs(leaderstats:GetChildren()) do
+            if i > 100 then break end
+            if child:IsA("ValueBase") and not isPrivate(child.Name) then
+                rows[#rows + 1] = {Path = "leaderstats." .. clean(child.Name, 80), Value = displayValue(child.Value), Kind = typeof(child.Value)}
+            end
+        end
+    end
+    local ok, attrs = pcall(function() return player:GetAttributes() end)
+    if ok and type(attrs) == "table" then
+        for name, value in pairs(attrs) do
+            if isStat(name) and not isPrivate(name) then
+                rows[#rows + 1] = {Path = "Attributes." .. clean(name, 80), Value = displayValue(value), Kind = typeof(value)}
+            end
+        end
+    end
+    table.sort(rows, function(a, b) return a.Path < b.Path end)
+    return rows
+end
+
+function App:AttachData(data)
+    if self.Data == data then return end
+    disconnect(self.DataConnection)
+    self.DataConnection = nil
+    self.Data = data
+    if data and type(data.OnDataChange) == "function" then
+        local ok, connection = pcall(function()
+            return data:OnDataChange(function()
+                -- Replion callbacks do not yield or scan the data synchronously.
+                self.Dirty = true
+            end)
+        end)
+        if ok then self.DataConnection = connection end
     end
 end
 
-print("------- SCANNING STAT KEYS -------")
-inspect(root, "", 0)
-
-print("------- HASIL -------")
-
-if found > 0 then
-    print("[KIMS] DITEMUKAN", found,
-        "FIELD KANDIDAT STAT AKUN")
-else
-    warn("[KIMS] BELUM ADA FIELD STAT YANG COCOK")
+function App:Scan(manual)
+    if not self.Alive or self.Busy then return false end
+    self.Busy = true
+    local ok, problem = xpcall(function()
+        local root = self.Data and rootFromData(self.Data)
+        if not root then
+            self:AttachData(nil)
+            if not self.Replion then
+                local module = findModule()
+                self.ModuleState = module and "Ditemukan; membaca modul" or "Modul Replion belum ditemukan"
+                if module then
+                    self.ModulePath = module:GetFullName()
+                    local requireOK, api = pcall(require, module)
+                    if not self.Alive then return end
+                    if requireOK and type(api) == "table" and type(api.Client) == "table" then
+                        self.Replion = api
+                        self.ModuleState = "Replion berhasil dibaca"
+                        self.ModuleError = nil
+                    else
+                        self.ModuleState = "Require Replion belum berhasil"
+                        self.ModuleError = requireOK and "Replion.Client belum tersedia pada modul ini" or clean(api, 180)
+                    end
+                end
+            end
+            if self.Replion then
+                local getOK, data = pcall(function() return self.Replion.Client:GetReplion("Data") end)
+                self.ChannelError = not getOK and clean(data, 180) or nil
+                if getOK and data then
+                    self:AttachData(data)
+                    root = rootFromData(data)
+                end
+                self.ChannelState = root and "Channel Data terbaca" or "Channel Data belum tersedia"
+            else self.ChannelState = "Menunggu Replion" end
+        end
+        if not self.Alive then return end
+        if root then
+            self.Source = "Replion / Data"
+            self.ChannelState = "Channel Data terbaca"
+            self.Rows, self.Truncated = collectStats(root)
+            self.Inventory, self.InventoryState = summarizeInventory(root)
+            self.InventoryAvailable = type(root.Inventory) == "table"
+            self.Equipped = (type(root.EquippedId) == "number" or type(root.EquippedId) == "string")
+                and clean(root.EquippedId, 100) or "Belum terbaca"
+            self.RootKeys = {}
+            local keys = sortedKeys(root)
+            for _, key in ipairs(keys) do
+                if not isPrivate(key) then
+                    self.RootKeys[#self.RootKeys + 1] = clean(key, 70) .. " : " .. typeof(root[key])
+                end
+                if #self.RootKeys >= 80 then break end
+            end
+        else
+            self.Rows = fallbackStats()
+            self.Source = #self.Rows > 0 and "leaderstats / Attributes" or "Data belum tersedia"
+            self.Inventory, self.RootKeys = {}, {}
+            self.InventoryState, self.Equipped = "Inventory belum terbaca", "Belum terbaca"
+            self.InventoryAvailable = false
+            self.Truncated = false
+        end
+        self.LastScan, self.Dirty = os.date("%H:%M:%S"), false
+        self.LastError = nil
+        if manual or self.LastSource ~= self.Source then
+            self:Log("SCAN", self.Source .. " | " .. #self.Rows .. " field kandidat stat")
+        end
+        self.LastSource = self.Source
+    end, function(err) return clean(err, 180) end)
+    self.Busy = false
+    if not ok then
+        self.LastError = problem
+        self:Log("ERROR", problem)
+        if manual then self:Toast("Scan gagal; buka tab Diagnostik.") end
+    end
+    if self.Alive and self.Render then self:Render() end
+    return ok
 end
 
-print("========== TEST SELESAI ==========")
+function App:Report()
+    local lines = {"KIMS SCRIPT " .. VERSION, "Akun: " .. clean(player.Name),
+        "PlaceId: " .. tostring(game.PlaceId), "GameId: " .. tostring(game.GameId),
+        "Sumber: " .. self.Source, "Modul: " .. self.ModuleState,
+        "Path modul: " .. (self.ModulePath or "Belum ditemukan"),
+        "Kendala modul: " .. (self.ModuleError or "Tidak ada"),
+        "Kendala channel: " .. (self.ChannelError or "Tidak ada"),
+        "Channel: " .. self.ChannelState, "Scan: " .. self.LastScan,
+        "Inventory: " .. (self.InventoryState or "Belum diperiksa"),
+        "EquippedId: " .. self.Equipped, "--- KANDIDAT STAT ---"}
+    for _, row in ipairs(self.Rows) do lines[#lines + 1] = row.Path .. " = " .. row.Value end
+    if #self.Rows == 0 then lines[#lines + 1] = "Belum ada field kandidat yang terbaca." end
+    lines[#lines + 1] = "--- NAMA FIELD ROOT (TANPA NILAI) ---"
+    for _, line in ipairs(self.RootKeys) do lines[#lines + 1] = line end
+    lines[#lines + 1] = "--- LOG ---"
+    for _, line in ipairs(self.Logs) do lines[#lines + 1] = line end
+    if self.LastError then lines[#lines + 1] = "Error terakhir: " .. self.LastError end
+    return table.concat(lines, "\n")
+end
+
+function App:CopyReport()
+    if type(clipboard) == "function" then
+        local ok = pcall(clipboard, self:Report())
+        if ok then self:Toast("Laporan tersalin. Kirim hasilnya untuk cek data game."); return true end
+    end
+    self:Toast("Clipboard belum tersedia. Laporan bisa dipilih di tab Diagnostik.")
+    if self.SelectTab then self:SelectTab("DIAGNOSTIK") end
+    return false
+end
+
+function App:Destroy()
+    if not self.Alive then return end
+    self.Alive = false
+    disconnect(self.DataConnection)
+    for _, connection in ipairs(self.Connections) do disconnect(connection) end
+    self.Connections = {}
+    if self.Gui then pcall(function() self.Gui:Destroy() end) end
+    if ENV[GLOBAL_KEY] == self then ENV[GLOBAL_KEY] = nil end
+    self.Data, self.Replion = nil, nil
+    print("[KIMS] Panel ditutup; koneksi dan pemantauan dihentikan.")
+end
+
+-- UI is appended below. Keeping data access and UI in one file makes datav2
+-- independently uploadable without relying on external hub loaders.
+
+local COLOR = {Background = Color3.fromRGB(15, 17, 23), Panel = Color3.fromRGB(23, 26, 34),
+    Row = Color3.fromRGB(30, 34, 44), Gold = Color3.fromRGB(226, 192, 126),
+    Text = Color3.fromRGB(237, 239, 245), Muted = Color3.fromRGB(155, 166, 185),
+    Green = Color3.fromRGB(129, 211, 166), Red = Color3.fromRGB(245, 142, 142)}
+
+local function create(className, props, parent)
+    local object = Instance.new(className)
+    for key, value in pairs(props) do object[key] = value end
+    object.Parent = parent
+    return object
+end
+
+local function round(object, radius)
+    create("UICorner", {CornerRadius = UDim.new(0, radius or 10)}, object)
+end
+
+local function label(parent, text, position, size, muted, fontSize)
+    return create("TextLabel", {BackgroundTransparency = 1, Text = text,
+        Position = position, Size = size, Font = Enum.Font.Gotham,
+        TextSize = fontSize or 13, TextColor3 = muted and COLOR.Muted or COLOR.Text,
+        TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+        RichText = false}, parent)
+end
+
+local function button(parent, text, position, size, action)
+    local b = create("TextButton", {BackgroundColor3 = COLOR.Row, BorderSizePixel = 0,
+        Text = text, Position = position, Size = size, Font = Enum.Font.GothamMedium,
+        TextSize = 12, TextColor3 = COLOR.Text, AutoButtonColor = true}, parent)
+    round(b, 8)
+    App:Track(b.Activated:Connect(function()
+        if not App.Alive then return end
+        local ok, err = pcall(action)
+        if not ok then App:Log("ERROR", err); App:Toast("Aksi gagal; buka Diagnostik.") end
+    end))
+    return b
+end
+
+local function searchBox(parent, placeholder, y)
+    local input = create("TextBox", {BackgroundColor3 = COLOR.Row, BorderSizePixel = 0,
+        Position = UDim2.fromOffset(0, y), Size = UDim2.new(1, 0, 0, 32),
+        PlaceholderText = placeholder, PlaceholderColor3 = COLOR.Muted, Text = "",
+        TextColor3 = COLOR.Text, TextSize = 12, Font = Enum.Font.Gotham,
+        ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left}, parent)
+    round(input, 8)
+    create("UIPadding", {PaddingLeft = UDim.new(0, 11), PaddingRight = UDim.new(0, 11)}, input)
+    App:Track(input:GetPropertyChangedSignal("Text"):Connect(function()
+        if App.Render then App:Render() end
+    end))
+    return input
+end
+
+local function listFrame(parent, y)
+    local scroll = create("ScrollingFrame", {Position = UDim2.fromOffset(0, y),
+        Size = UDim2.new(1, 0, 1, -y), BackgroundTransparency = 1, BorderSizePixel = 0,
+        ScrollBarThickness = 3, ScrollBarImageColor3 = COLOR.Gold,
+        CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y}, parent)
+    create("UIListLayout", {Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder}, scroll)
+    create("UIPadding", {PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 6)}, scroll)
+    return scroll
+end
+
+local function renderList(scroll, rows, query, emptyText)
+    query = tostring(query or ""):lower()
+    local shown, signature = {}, {query, emptyText}
+    for _, row in ipairs(rows) do
+        if query == "" or (row.Path .. " " .. row.Value):lower():find(query, 1, true) then
+            shown[#shown + 1] = row
+            signature[#signature + 1] = row.Path .. "\0" .. row.Value
+        end
+    end
+    local sig = table.concat(signature, "\1")
+    if App.ListCache[scroll] == sig then return end
+    App.ListCache[scroll] = sig
+    local canvas = scroll.CanvasPosition
+    for _, child in ipairs(scroll:GetChildren()) do
+        if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
+    end
+    if #shown == 0 then
+        local message = label(scroll, query ~= "" and "Tidak ada hasil yang cocok." or emptyText,
+            UDim2.new(), UDim2.new(1, -12, 0, 68), true, 13)
+        message.TextWrapped = true
+        message.TextTruncate = Enum.TextTruncate.None
+        return
+    end
+    for index, row in ipairs(shown) do
+        local frame = create("Frame", {Size = UDim2.new(1, 0, 0, 58),
+            BackgroundColor3 = COLOR.Panel, BorderSizePixel = 0, LayoutOrder = index}, scroll)
+        round(frame, 8)
+        label(frame, row.Path, UDim2.fromOffset(12, 5), UDim2.new(1, -24, 0, 22), true, 11)
+        local value = label(frame, row.Value, UDim2.fromOffset(12, 28), UDim2.new(1, -24, 0, 22), false, 13)
+        value.TextColor3 = COLOR.Gold
+    end
+    scroll.CanvasPosition = canvas
+end
+
+local function attachDrag(handle, target, bubble)
+    local dragging, touch, start, startPosition, moved = false, nil, nil, nil, false
+    App:Track(handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging, touch, start, startPosition, moved = true, input, input.Position, target.Position, false
+        end
+    end))
+    App:Track(UIS.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input ~= touch and not (touch.UserInputType == Enum.UserInputType.MouseButton1
+            and input.UserInputType == Enum.UserInputType.MouseMovement) then return end
+        local dx, dy = input.Position.X - start.X, input.Position.Y - start.Y
+        if math.abs(dx) + math.abs(dy) > 5 then moved = true end
+        local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 600)
+        local size = target.AbsoluteSize
+        target.Position = UDim2.fromOffset(
+            math.clamp(startPosition.X.Offset + dx, 4, math.max(4, viewport.X - size.X - 4)),
+            math.clamp(startPosition.Y.Offset + dy, 4, math.max(4, viewport.Y - size.Y - 4)))
+        if bubble and moved then App.IgnoreBubbleClickUntil = os.clock() + 0.25 end
+    end))
+    App:Track(UIS.InputEnded:Connect(function(input)
+        if input == touch or input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end))
+end
+
+local function initialize()
+    if not player then error("LocalPlayer belum tersedia; jalankan setelah masuk game.") end
+    loadSettings()
+    local gui = create("ScreenGui", {Name = "KIMS_SCRIPT_UI_V1", ResetOnSpawn = false,
+        IgnoreGuiInset = true, DisplayOrder = 10000, ZIndexBehavior = Enum.ZIndexBehavior.Sibling})
+    App.Gui, App.ListCache = gui, {}
+    local parents = {}
+    if type(gethui) == "function" then
+        local ok, parent = pcall(gethui)
+        if ok and parent then parents[#parents + 1] = parent end
+    end
+    local coreOK, coreGui = pcall(function() return game:GetService("CoreGui") end)
+    if coreOK and coreGui then parents[#parents + 1] = coreGui end
+    local playerGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+    if playerGui then parents[#parents + 1] = playerGui end
+    for _, parent in ipairs(parents) do
+        local ok = pcall(function() gui.Parent = parent end)
+        if ok and gui.Parent then break end
+    end
+    if not gui.Parent then error("UI tidak bisa dipasang ke layar.") end
+
+    local window = create("Frame", {Name = "Window", BackgroundColor3 = COLOR.Background,
+        BorderSizePixel = 0, Active = true, ClipsDescendants = true,
+        Size = UDim2.fromOffset(680, 500)}, gui)
+    App.Window = window
+    round(window, 14)
+    create("UIStroke", {Color = COLOR.Gold, Thickness = 1, Transparency = 0.55}, window)
+
+    local header = create("Frame", {Size = UDim2.new(1, 0, 0, 68), BackgroundTransparency = 1,
+        Active = true}, window)
+    local title = label(header, "KIMS SCRIPT", UDim2.fromOffset(20, 12), UDim2.new(1, -140, 0, 25), false, 20)
+    title.Font, title.TextColor3 = Enum.Font.GothamBold, COLOR.Gold
+    label(header, "ACCOUNT MONITOR  /  V" .. VERSION, UDim2.fromOffset(20, 40),
+        UDim2.new(1, -130, 0, 17), true, 10)
+    button(header, "_", UDim2.new(1, -90, 0, 16), UDim2.fromOffset(30, 30), function() App:Minimize() end)
+    button(header, "X", UDim2.new(1, -52, 0, 16), UDim2.fromOffset(30, 30), function() App:Destroy() end)
+    local line = create("Frame", {Position = UDim2.fromOffset(18, 67), Size = UDim2.new(1, -36, 0, 1),
+        BorderSizePixel = 0, BackgroundColor3 = COLOR.Gold}, window)
+    create("UIGradient", {Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 0.8),
+        NumberSequenceKeypoint.new(0.5, 0.1), NumberSequenceKeypoint.new(1, 0.8)})}, line)
+
+    App.TabButtons, App.Pages = {}, {}
+    local tabs = {"STAT AKUN", "INVENTORY", "DIAGNOSTIK", "PENGATURAN"}
+    for index, name in ipairs(tabs) do
+        local tabName = name
+        App.TabButtons[name] = button(window, name, UDim2.new((index - 1) / 4, 18 - (index - 1) * 9, 0, 80),
+            UDim2.new(0.25, -14, 0, 30), function() App:SelectTab(tabName) end)
+        App.TabButtons[name].TextSize = 10
+        App.Pages[name] = create("Frame", {Name = "Page" .. index, Position = UDim2.fromOffset(18, 124),
+            Size = UDim2.new(1, -36, 1, -188), BackgroundTransparency = 1, Visible = false}, window)
+    end
+
+    local statsPage = App.Pages["STAT AKUN"]
+    App.StatsSummary = label(statsPage, "Memeriksa data akun...", UDim2.new(), UDim2.new(1, 0, 0, 22), false, 13)
+    App.StatsNote = label(statsPage, "Nama field ditampilkan sesuai data game.", UDim2.fromOffset(0, 22),
+        UDim2.new(1, 0, 0, 18), true, 11)
+    App.StatsSearch = searchBox(statsPage, "Cari field: coin, level, caught, luck...", 47)
+    App.StatsList = listFrame(statsPage, 88)
+
+    local inventoryPage = App.Pages.INVENTORY
+    App.InventorySummary = label(inventoryPage, "Inventory belum diperiksa", UDim2.new(), UDim2.new(1, 0, 0, 22), false, 13)
+    App.EquippedLabel = label(inventoryPage, "EquippedId: belum terbaca", UDim2.fromOffset(0, 22),
+        UDim2.new(1, 0, 0, 18), true, 11)
+    App.InventorySearch = searchBox(inventoryPage, "Cari kategori, ID, atau nilai inventory...", 47)
+    App.InventoryList = listFrame(inventoryPage, 88)
+
+    local diagnosticsPage = App.Pages.DIAGNOSTIK
+    label(diagnosticsPage, "Laporan pemeriksaan", UDim2.new(), UDim2.new(1, -120, 0, 28), false, 13)
+    button(diagnosticsPage, "SALIN LAPORAN", UDim2.new(1, -118, 0, 0), UDim2.fromOffset(118, 28), function() App:CopyReport() end)
+    local reportScroll = listFrame(diagnosticsPage, 38)
+    App.ReportBox = create("TextBox", {BackgroundColor3 = COLOR.Panel, BorderSizePixel = 0,
+        Size = UDim2.new(1, -4, 0, 80), AutomaticSize = Enum.AutomaticSize.Y, Text = "Menunggu scan...",
+        TextWrapped = true, MultiLine = true, ClearTextOnFocus = false, TextEditable = true,
+        TextSize = 12, Font = Enum.Font.Code, TextColor3 = COLOR.Text,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top}, reportScroll)
+    create("UIPadding", {PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10),
+        PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10)}, App.ReportBox)
+    round(App.ReportBox, 8)
+
+    local settingsPage = App.Pages.PENGATURAN
+    App.SettingsList = listFrame(settingsPage, 0)
+    local settingsBody = create("Frame", {BackgroundTransparency = 1, Size = UDim2.new(1, -4, 0, 250)}, App.SettingsList)
+    label(settingsBody, "Pemantauan akun", UDim2.new(), UDim2.new(1, 0, 0, 24), false, 14)
+    App.AutoButton = button(settingsBody, "", UDim2.fromOffset(0, 34), UDim2.new(1, 0, 0, 35), function()
+        App.AutoRefresh = not App.AutoRefresh
+        App:SaveSettings()
+        App:Render()
+    end)
+    App.IntervalButton = button(settingsBody, "", UDim2.fromOffset(0, 78), UDim2.new(1, 0, 0, 35), function()
+        App.Interval = App.Interval == 3 and 5 or (App.Interval == 5 and 10 or 3)
+        App:SaveSettings()
+        App:Render()
+    end)
+    button(settingsBody, "SIMPAN PREFERENSI", UDim2.fromOffset(0, 122), UDim2.new(0.5, -5, 0, 35), function()
+        local _, message = App:SaveSettings(); App:Toast(message)
+    end)
+    button(settingsBody, "TES UI", UDim2.new(0.5, 5, 0, 122), UDim2.new(0.5, -5, 0, 35), function()
+        App:Log("PASS", "Tombol dan notifikasi UI berfungsi.")
+        App:Toast("Tes UI berhasil, bro. Tombol dan notifikasi aktif.")
+    end)
+    local help = label(settingsBody, "Scan data saat masuk game. Field kosong tetap ditandai belum terbaca.\nRight Shift / bubble K untuk membuka panel. X menghentikan pemantauan.",
+        UDim2.fromOffset(0, 170), UDim2.new(1, 0, 0, 72), true, 12)
+    help.TextWrapped, help.TextTruncate = true, Enum.TextTruncate.None
+
+    local footer = create("Frame", {Position = UDim2.new(0, 18, 1, -51), Size = UDim2.new(1, -36, 0, 35),
+        BackgroundTransparency = 1}, window)
+    App.StatusLabel = label(footer, "Memulai...", UDim2.new(), UDim2.new(1, -110, 1, 0), true, 10)
+    App.ScanButton = button(footer, "SCAN ULANG", UDim2.new(1, -105, 0, 0), UDim2.fromOffset(105, 35), function()
+        if App.Busy then App:Toast("Scan masih berjalan."); return end
+        task.spawn(function() App:Scan(true) end)
+    end)
+
+    App.Bubble = button(gui, "K", UDim2.fromOffset(20, 120), UDim2.fromOffset(48, 48), function()
+        if os.clock() >= (App.IgnoreBubbleClickUntil or 0) then App:Show() end
+    end)
+    App.Bubble.Name, App.Bubble.TextSize, App.Bubble.TextColor3 = "KimsBubble", 22, COLOR.Gold
+    App.Bubble.Font, App.Bubble.Visible = Enum.Font.GothamBold, false
+    App.ToastLabel = create("TextLabel", {Name = "Toast", AnchorPoint = Vector2.new(0.5, 1),
+        Position = UDim2.new(0.5, 0, 1, -18), Size = UDim2.new(0.9, 0, 0, 54),
+        BackgroundColor3 = COLOR.Row, BorderSizePixel = 0, TextColor3 = COLOR.Text,
+        Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true, Visible = false, ZIndex = 20}, gui)
+    round(App.ToastLabel, 10)
+    attachDrag(header, window, false)
+    attachDrag(App.Bubble, App.Bubble, true)
+
+    function App:Show()
+        if not self.Alive then return end
+        self.Window.Visible, self.Bubble.Visible = true, false
+        self.Gui.Enabled = true
+    end
+    function App:Minimize()
+        self.Window.Visible, self.Bubble.Visible = false, true
+    end
+    function App:SelectTab(name)
+        if not self.Pages[name] then return end
+        self.ActiveTab = name
+        for tabName, page in pairs(self.Pages) do
+            page.Visible = tabName == name
+            self.TabButtons[tabName].BackgroundColor3 = tabName == name and COLOR.Gold or COLOR.Row
+            self.TabButtons[tabName].TextColor3 = tabName == name and COLOR.Background or COLOR.Text
+        end
+        self:Render()
+    end
+    function App:Render()
+        self.StatsSummary.Text = clean(player.Name) .. "  /  " .. #self.Rows .. " field kandidat"
+        self.StatsNote.Text = self.Source .. (self.Truncated and " | Hasil dibatasi" or " | Nilai mengikuti data game")
+        self.InventorySummary.Text = self.InventoryState or "Inventory belum diperiksa"
+        self.EquippedLabel.Text = "EquippedId: " .. self.Equipped
+        self.StatusLabel.Text = (self.Busy and "Scan berjalan..." or ("Scan " .. self.LastScan)) .. "  |  " .. self.Source
+        self.AutoButton.Text = "AUTO REFRESH: " .. (self.AutoRefresh and "ON" or "OFF")
+        self.IntervalButton.Text = "INTERVAL: " .. self.Interval .. " DETIK  (klik untuk ubah)"
+        if self.ActiveTab == "STAT AKUN" then
+            renderList(self.StatsList, self.Rows, self.StatsSearch.Text,
+                "Belum ada field stat terbaca. Buka Diagnostik lalu salin laporan pemeriksaan.")
+        elseif self.ActiveTab == "INVENTORY" then
+            renderList(self.InventoryList, self.Inventory, self.InventorySearch.Text,
+                self.InventoryAvailable and "Inventory terbaca; belum ada entri yang ditampilkan."
+                    or "Inventory belum tersedia dari channel Data.")
+        elseif self.ActiveTab == "DIAGNOSTIK" and not self.ReportBox:IsFocused() then
+            self.ReportBox.Text = self:Report()
+        end
+    end
+
+    local function fit(center)
+        if not App.Alive then return end
+        local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(800, 600)
+        local w, h = math.min(680, math.max(240, viewport.X - 24)), math.min(500, math.max(300, viewport.Y - 24))
+        window.Size = UDim2.fromOffset(w, h)
+        local p = window.Position
+        window.Position = UDim2.fromOffset(center and math.max(4, (viewport.X - w) / 2)
+            or math.clamp(p.X.Offset, 4, math.max(4, viewport.X - w - 4)),
+            center and math.max(4, (viewport.Y - h) / 2)
+            or math.clamp(p.Y.Offset, 4, math.max(4, viewport.Y - h - 4)))
+    end
+    fit(true)
+    local camera = workspace.CurrentCamera
+    if camera then App:Track(camera:GetPropertyChangedSignal("ViewportSize"):Connect(function() fit(false) end)) end
+    App:Track(UIS.InputBegan:Connect(function(input, processed)
+        if not processed and input.KeyCode == Enum.KeyCode.RightShift and not UIS:GetFocusedTextBox() then
+            if window.Visible then App:Minimize() else App:Show() end
+        end
+    end))
+    App:Track(gui.Destroying:Connect(function() App:Destroy() end))
+    App:SelectTab("STAT AKUN")
+    pcall(function()
+        window.BackgroundTransparency = 0.35
+        Tween:Create(window, TweenInfo.new(0.25), {BackgroundTransparency = 0}):Play()
+    end)
+    App:Log("START", "KIMS SCRIPT " .. VERSION .. " aktif. Menunggu pembacaan data akun.")
+    task.spawn(function() App:Scan(true) end)
+    task.spawn(function()
+        local last = os.clock()
+        local busySince, warned = nil, false
+        while App.Alive do
+            task.wait(0.5)
+            if not App.Alive then break end
+            if App.Busy then
+                busySince = busySince or os.clock()
+                if not warned and os.clock() - busySince > 12 then
+                    warned = true
+                    App:Log("WAIT", "Pembacaan modul masih menunggu; UI tetap dapat dipakai.")
+                    App:Toast("Pembacaan modul masih menunggu. Lihat Diagnostik.")
+                end
+            else busySince, warned = nil, false end
+            if App.AutoRefresh and not App.Busy and os.clock() - last >= App.Interval then
+                last = os.clock()
+                task.spawn(function() App:Scan(false) end)
+            end
+        end
+    end)
+end
+
+local initialized, problem = xpcall(initialize, function(err) return clean(err, 220) end)
+if not initialized then
+    App:Destroy()
+    warn("[KIMS] Gagal membuka panel: " .. tostring(problem))
+    error("KIMS SCRIPT: " .. tostring(problem), 0)
+end
+return App
