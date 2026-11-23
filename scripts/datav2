@@ -1,10 +1,10 @@
--- KIMS SCRIPT V1.0.0 | 24 November 2026
+-- KIMS SCRIPT V1.1.0 LIVE | 24 November 2026
 -- Replace the CONTENTS of scripts/datav2 with this complete file.
 -- Based on the owner's KIMS STAT AKUN V1. UI/lifecycle code is implemented
 -- for KIMS using the readable hub patterns documented in PANDUAN_KIMS.txt.
 -- Reads client-visible data. No external UI library or key service required.
 
-local VERSION = "1.0.0"
+local VERSION = "1.1.0"
 local GLOBAL_KEY = "__KIMS_SCRIPT_APP_V1"
 local ENV = _G
 if type(getgenv) == "function" then
@@ -13,16 +13,22 @@ if type(getgenv) == "function" then
 end
 
 local previous = ENV[GLOBAL_KEY]
-if type(previous) == "table" and previous.Alive then
+if type(previous) == "table" and previous.Alive and previous.Version == VERSION then
     if type(previous.Show) == "function" then pcall(previous.Show, previous) end
     print("[KIMS] Panel sudah aktif; panel yang sama dibuka kembali.")
     return previous
 end
+if type(previous) == "table" and previous.Alive and type(previous.Destroy) == "function" then
+    pcall(previous.Destroy, previous)
+end
 
-local App = {Alive = true, Connections = {}, Logs = {}, Rows = {}, Inventory = {},
+local App = {Alive = true, Version = VERSION, LiveVersion = 1,
+    Connections = {}, Logs = {}, Rows = {}, Inventory = {},
     RootKeys = {}, Source = "Menunggu scan", ModuleState = "Belum diperiksa",
     ChannelState = "Belum diperiksa", Busy = false, AutoRefresh = true,
-    Interval = 5, LastScan = "Belum", Equipped = "Belum terbaca", Truncated = false}
+    Interval = 5, LastScan = "Belum", Equipped = "Belum terbaca", Truncated = false,
+    LiveEnabled = true, LiveFeed = {}, LiveEpoch = 0, LiveSeq = 0, LiveSignals = 0,
+    LiveLastEvent = "Belum", LiveStatus = "Menunggu Data", LiveInventoryStatus = "Belum diperiksa"}
 ENV[GLOBAL_KEY] = App
 
 local Players = game:GetService("Players")
@@ -137,6 +143,7 @@ local function collectStats(root)
         if depth > 3 or seen[tbl] then return end
         seen[tbl] = true
         local keys, capped = sortedKeys(tbl)
+        local deferred = {}
         truncated = truncated or capped
         for _, key in ipairs(keys) do
             budget = budget + 1
@@ -150,10 +157,12 @@ local function collectStats(root)
                 end
                 local low = normalized(name)
                 if type(value) == "table" and low ~= "inventory" and low ~= "items" then
-                    walk(value, path, depth + 1, inherited or candidate)
+                    deferred[#deferred + 1] = {value, path, inherited or candidate}
                 end
             end
         end
+        -- Root scalars (Coins, Level, etc.) must be read before a large mastery table.
+        for _, child in ipairs(deferred) do walk(child[1], child[2], depth + 1, child[3]) end
     end
     walk(root, "", 0, false)
     table.sort(rows, function(a, b) return a.Path < b.Path end)
@@ -209,6 +218,266 @@ local function rootFromData(data)
     return nil
 end
 
+-- Live observation uses fresh scalar snapshots, not references to mutable game tables.
+local function masterySnapshot(root)
+    local result, n = {}, 0
+    if type(root.CaughtFishMastery) ~= "table" then return nil, "Mastery belum tersedia" end
+    for name, record in pairs(root.CaughtFishMastery) do
+        n = n + 1
+        if n > 5000 then return nil, "Mastery melewati batas 5000 jenis; deteksi ditunda" end
+        if type(name) == "string" and type(record) == "table" then
+            local count = rawget(record, "Count")
+            if type(count) == "number" and count == count and count >= 0 and count < math.huge then
+                result[name] = count
+            else result[name] = false end -- Known record, Count not supplied by the game.
+        end
+    end
+    return result, "Mastery siap"
+end
+
+local function scalarField(record, names)
+    if type(record) ~= "table" then return nil end
+    for _, name in ipairs(names) do
+        local value = rawget(record, name)
+        if type(value) == "string" or type(value) == "number" then return clean(value, 90) end
+    end
+    return nil
+end
+
+local function isUUID(value)
+    return type(value) == "string" and value:match("^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") ~= nil
+end
+
+local function inventorySnapshot(root)
+    if type(root.Inventory) ~= "table" then return nil, "Inventory belum tersedia", {} end
+    local items, visited, schema, budget, records, complete = {}, {}, {}, 0, 0, true
+    local function walk(tbl, path, key, depth)
+        if not complete or visited[tbl] or depth > 5 then return end
+        visited[tbl] = true
+        local identity = scalarField(tbl, {"UUID", "Uuid", "uuid", "UID", "uid"})
+        if identity == "" then identity = nil end
+        if not identity then
+            local idValue = rawget(tbl, "Id") or rawget(tbl, "ID")
+            if isUUID(idValue) then identity = idValue elseif isUUID(key) then identity = key end
+        end
+        if identity then
+            records = records + 1
+            if records > 2500 then complete = false; return end
+            local meta = type(tbl.Metadata) == "table" and tbl.Metadata or {}
+            items[identity] = {UUID = identity, Path = path,
+                Name = scalarField(tbl, {"FishName", "Name", "ItemName"}),
+                ItemId = scalarField(tbl, {"Id", "ID", "ItemId", "FishId"}),
+                Variant = scalarField(tbl, {"Variant", "Mutation"}) or scalarField(meta, {"Variant", "Mutation"}),
+                Rarity = scalarField(tbl, {"Rarity", "Tier"}) or scalarField(meta, {"Rarity", "Tier"}),
+                Weight = scalarField(tbl, {"Weight"}) or scalarField(meta, {"Weight"})}
+            if #schema < 4 then
+                local fields = {}
+                for field, value in pairs(tbl) do
+                    if not isPrivate(field) and #fields < 16 then fields[#fields + 1] = clean(field, 30) .. ":" .. typeof(value) end
+                end
+                table.sort(fields)
+                schema[#schema + 1] = path .. " {" .. table.concat(fields, ", ") .. "}"
+            end
+            return
+        end
+        for childKey, value in pairs(tbl) do
+            budget = budget + 1
+            if budget > 8000 then complete = false; return end
+            if type(value) == "table" and not isPrivate(childKey) then
+                if depth >= 5 then complete = false; return end
+                walk(value, path .. "." .. clean(childKey, 60), childKey, depth + 1)
+            end
+        end
+    end
+    walk(root.Inventory, "Inventory", nil, 0)
+    if not complete then return nil, "Inventory dibatasi; deteksi UUID ditunda", schema end
+    return items, tostring(records) .. " record UUID siap", schema
+end
+
+local function pathInfo(path)
+    if type(path) == "table" then
+        local parts = {}
+        for i, part in ipairs(path) do if i > 7 then break end; parts[#parts + 1] = clean(part, 60) end
+        return tostring(path[1] or ""), table.concat(parts, ".")
+    end
+    if type(path) == "string" then return path:match("^([^%.]+)") or path, clean(path, 180) end
+    return "", "Path tidak disertakan modul"
+end
+
+function App:AddLive(record)
+    self.LiveBatchCount = (self.LiveBatchCount or 0) + 1
+    if self.LiveBatchCount > 40 then
+        self.LiveOmitted = (self.LiveOmitted or 0) + 1
+        return
+    end
+    self.LiveSeq = self.LiveSeq + 1
+    record.Seq = self.LiveSeq
+    record.DelayMs = math.max(0, math.floor((os.clock() - record.ReceivedAt) * 1000 + 0.5))
+    table.insert(self.LiveFeed, 1, record)
+    if #self.LiveFeed > 40 then table.remove(self.LiveFeed) end
+    self:Log("LIVE", record.Kind .. " | " .. record.Name .. " | " .. record.Source)
+end
+
+function App:ObserveLive(source, receivedAt, receivedTime, suppliedRoot)
+    if not self.Alive or not self.LiveEnabled or self.LiveBusy then return end
+    if self.LivePending and source ~= "EVENT" then return end
+    self.LiveBusy = true
+    self.LiveBatchCount = 0
+    local ok, err = pcall(function()
+        local root = suppliedRoot or (self.Data and rootFromData(self.Data))
+        if type(root) ~= "table" then
+            self.LiveCounts, self.LiveItems = nil, nil
+            self.LiveStatus = "Menunggu Data"
+            return
+        end
+        local counts, masteryState = masterySnapshot(root)
+        local items, inventoryState, schema = inventorySnapshot(root)
+        self.LiveInventoryStatus, self.LiveSchema = inventoryState, schema
+        self.LiveMasteryStatus = masteryState
+        local wasReady = self.LiveCounts ~= nil or self.LiveItems ~= nil
+        local added = false
+        if counts and self.LiveCounts then
+            local names = {}
+            for name in pairs(counts) do names[#names + 1] = name end
+            table.sort(names)
+            for _, name in ipairs(names) do
+                local before, after = self.LiveCounts[name], counts[name]
+                local oldCount = type(before) == "number" and before or nil
+                local newCount = type(after) == "number" and after or nil
+                local increase = oldCount ~= nil and newCount ~= nil and newCount > oldCount
+                if before == nil or increase or (before == false and newCount ~= nil) then
+                    self:AddLive({Kind = increase and "COUNT NAIK" or (before == nil and "MASTERY BARU" or "COUNT TERBACA"), Name = clean(name, 90),
+                        Quantity = increase and (newCount - oldCount) or nil, Before = oldCount, After = newCount,
+                        Source = source, ReceivedAt = receivedAt or os.clock(),
+                        Time = receivedTime or os.date("%H:%M:%S"),
+                        Path = "CaughtFishMastery." .. clean(name, 90) .. (newCount ~= nil and ".Count" or "")})
+                    added = true
+                end
+            end
+        end
+        if items and self.LiveItems then
+            local identities = {}
+            for identity in pairs(items) do identities[#identities + 1] = identity end
+            table.sort(identities)
+            for _, identity in ipairs(identities) do
+                if not self.LiveSeenItems[identity] then
+                    local item = items[identity]
+                    self:AddLive({Kind = "ITEM BARU", Name = item.Name or ("Item ID " .. (item.ItemId or "belum terbaca")),
+                        UUID = identity, ItemId = item.ItemId, Variant = item.Variant,
+                        Rarity = item.Rarity, Weight = item.Weight, Path = item.Path,
+                        Source = source, ReceivedAt = receivedAt or os.clock(), Time = receivedTime or os.date("%H:%M:%S")})
+                    added = true
+                end
+            end
+        end
+        self.LiveCounts, self.LiveItems = counts, items
+        if items then
+            self.LiveSeenItems = self.LiveSeenItems or {}
+            for identity in pairs(items) do self.LiveSeenItems[identity] = true end
+            local seen = 0
+            for _ in pairs(self.LiveSeenItems) do seen = seen + 1 end
+            if seen > 10000 then
+                self.LiveSeenItems = {}
+                for identity in pairs(items) do self.LiveSeenItems[identity] = true end
+            end
+        else self.LiveSeenItems = {} end
+        local ready = counts ~= nil or items ~= nil
+        self.LiveStatus = ready and "SIAP - pancing ikan untuk tes live" or "Data deteksi belum tersedia"
+        if ready and not wasReady then
+            self.LiveBaselineTime = os.date("%H:%M:%S")
+            self:Log("LIVE", "Baseline terbentuk; koleksi awal tidak dimasukkan ke feed.")
+        end
+        self.LiveLastCheck = os.date("%H:%M:%S")
+        if added then self.LiveLastChange = self.LiveLastCheck end
+    end)
+    self.LiveBusy = false
+    if not ok then
+        self.LiveStatus = "Ada kendala deteksi; salin hasil tes"
+        self.LiveError = clean(err, 180)
+    else self.LiveError = nil end
+    if self.Render and self.Alive then self:Render() end
+end
+
+function App:ResetLive(clearFeed)
+    self.LiveEpoch = self.LiveEpoch + 1
+    self.LivePending, self.LivePendingMeta = false, nil
+    self.LiveCounts, self.LiveItems, self.LiveSeenItems = nil, nil, {}
+    self.LiveBaselineTime = nil
+    self.LiveStatus = self.LiveEnabled and "Menunggu baseline" or "PAUSE"
+    if clearFeed then
+        self.LiveFeed, self.LiveSeq, self.LiveSignals, self.LiveOmitted = {}, 0, 0, 0
+        self.LiveLastEvent, self.LiveLastChange = "Belum", nil
+        self.LiveLastPath = nil
+    end
+    if self.LiveEnabled then self:ObserveLive("BASELINE", os.clock(), os.date("%H:%M:%S")) end
+    if self.Render and self.Alive then self:Render() end
+end
+
+function App:QueueLive(path)
+    if not self.Alive or not self.LiveEnabled then return end
+    self.LiveSignals = self.LiveSignals + 1
+    self.LiveLastEvent = os.date("%H:%M:%S")
+    local first, text = pathInfo(path)
+    self.LiveLastPath = text
+    if first ~= "" and first ~= "Inventory" and first ~= "CaughtFishMastery" then return end
+    if self.LivePending then return end
+    self.LivePending = true
+    local epoch, receivedAt, receivedTime = self.LiveEpoch, os.clock(), os.date("%H:%M:%S")
+    task.delay(0.03, function()
+        if not self.Alive or self.LiveEpoch ~= epoch or not self.LiveEnabled then return end
+        self.LivePending = false
+        self:ObserveLive("EVENT", receivedAt, receivedTime)
+    end)
+end
+
+function App:LiveReport()
+    local lines = {"KIMS LIVE TEST " .. VERSION, "Akun: " .. clean(player.Name),
+        "Status: " .. (self.LiveEnabled and self.LiveStatus or "PAUSE"),
+        "Listener: " .. (self.DataConnection and "EVENT DATA + POLL 0.5s" or "POLL 0.5s"),
+        "Baseline: " .. (self.LiveBaselineTime or "Belum"),
+        "Event Data diterima: " .. self.LiveSignals .. " | terakhir " .. self.LiveLastEvent,
+        "Path event terakhir: " .. (self.LiveLastPath or "Belum"),
+        "Mastery: " .. (self.LiveMasteryStatus or "Belum diperiksa"),
+        "Inventory: " .. self.LiveInventoryStatus,
+        "Perubahan tersimpan: " .. #self.LiveFeed .. " (maksimum 40)",
+        "Perubahan dalam batch besar yang diringkas: " .. (self.LiveOmitted or 0),
+        "COUNT NAIK adalah perubahan mastery. ITEM BARU adalah UUID baru; sumber tangkapan belum terkonfirmasi.",
+        "MASTERY BARU / COUNT TERBACA menandai data yang baru terlihat, tanpa menganggapnya jumlah tangkapan baru.",
+        "Jeda adalah waktu pemrosesan lokal dari callback, bukan latensi jaringan/server.", "--- PERUBAHAN LIVE ---"}
+    for _, record in ipairs(self.LiveFeed) do
+        lines[#lines + 1] = "[" .. record.Time .. "] " .. record.Kind .. " | " .. record.Name
+            .. " | " .. record.Source .. " | proses lokal " .. record.DelayMs .. " ms"
+        lines[#lines + 1] = "Path: " .. record.Path
+        if record.Quantity then
+            lines[#lines + 1] = "COUNT: " .. record.Before .. " -> " .. record.After .. " (delta +" .. record.Quantity .. ")"
+        elseif record.After ~= nil then
+            lines[#lines + 1] = "Count saat record pertama teramati: " .. record.After .. " (nilai sebelumnya belum diketahui)"
+        elseif record.Kind ~= "ITEM BARU" then
+            lines[#lines + 1] = "Record mastery baru; field Count belum disediakan game."
+        end
+        if record.UUID then
+            lines[#lines + 1] = "UUID: " .. record.UUID .. " | ID: " .. (record.ItemId or "Belum terbaca")
+            lines[#lines + 1] = "VARIANT: " .. (record.Variant or "Belum terbaca") .. " | Rarity: "
+                .. (record.Rarity or "Belum terbaca") .. " | Weight: " .. (record.Weight or "Belum terbaca")
+        end
+    end
+    if #self.LiveFeed == 0 then lines[#lines + 1] = "Belum ada kenaikan Count atau UUID baru setelah baseline." end
+    lines[#lines + 1] = "--- CONTOH STRUKTUR INVENTORY (NAMA FIELD) ---"
+    for _, line in ipairs(self.LiveSchema or {}) do lines[#lines + 1] = line end
+    if self.LiveError then lines[#lines + 1] = "Kendala: " .. self.LiveError end
+    return table.concat(lines, "\n")
+end
+
+function App:CopyLiveReport()
+    if type(clipboard) == "function" and pcall(clipboard, self:LiveReport()) then
+        self:Toast("Hasil tes live tersalin. Kirim setelah mencoba 2-3 tangkapan.")
+        return true
+    end
+    self:Toast("Clipboard belum tersedia; laporan live ada di Diagnostik.")
+    if self.SelectTab then self:SelectTab("DIAGNOSTIK") end
+    return false
+end
+
 local function fallbackStats()
     local rows = {}
     local leaderstats = player:FindFirstChild("leaderstats")
@@ -237,11 +506,13 @@ function App:AttachData(data)
     disconnect(self.DataConnection)
     self.DataConnection = nil
     self.Data = data
+    self:ResetLive(false)
     if data and type(data.OnDataChange) == "function" then
         local ok, connection = pcall(function()
-            return data:OnDataChange(function()
+            return data:OnDataChange(function(_, path)
                 -- Replion callbacks do not yield or scan the data synchronously.
                 self.Dirty = true
+                self:QueueLive(path)
             end)
         end)
         if ok then self.DataConnection = connection end
@@ -297,7 +568,7 @@ function App:Scan(manual)
                 if not isPrivate(key) then
                     self.RootKeys[#self.RootKeys + 1] = clean(key, 70) .. " : " .. typeof(root[key])
                 end
-                if #self.RootKeys >= 80 then break end
+                if #self.RootKeys >= 200 then break end
             end
         else
             self.Rows = fallbackStats()
@@ -341,6 +612,8 @@ function App:Report()
     lines[#lines + 1] = "--- LOG ---"
     for _, line in ipairs(self.Logs) do lines[#lines + 1] = line end
     if self.LastError then lines[#lines + 1] = "Error terakhir: " .. self.LastError end
+    lines[#lines + 1] = "--- LAPORAN LIVE ---"
+    lines[#lines + 1] = self:LiveReport()
     return table.concat(lines, "\n")
 end
 
@@ -357,6 +630,7 @@ end
 function App:Destroy()
     if not self.Alive then return end
     self.Alive = false
+    self.LiveEpoch = self.LiveEpoch + 1
     disconnect(self.DataConnection)
     for _, connection in ipairs(self.Connections) do disconnect(connection) end
     self.Connections = {}
@@ -464,6 +738,49 @@ local function renderList(scroll, rows, query, emptyText)
     scroll.CanvasPosition = canvas
 end
 
+local function renderLive()
+    local signature = tostring(App.LiveSeq) .. ":" .. tostring(#App.LiveFeed) .. ":" .. tostring(App.LiveEnabled)
+    if App.LiveListSignature == signature then return end
+    App.LiveListSignature = signature
+    for _, child in ipairs(App.LiveList:GetChildren()) do
+        if child:IsA("Frame") or child:IsA("TextLabel") then child:Destroy() end
+    end
+    if #App.LiveFeed == 0 then
+        local empty = label(App.LiveList,
+            "Belum ada perubahan setelah baseline.\nTunggu status SIAP, lalu pancing 1 ikan.\nCOUNT NAIK dan ITEM BARU akan ditampilkan di sini.",
+            UDim2.new(), UDim2.new(1, -12, 0, 100), true, 13)
+        empty.TextWrapped, empty.TextTruncate = true, Enum.TextTruncate.None
+        return
+    end
+    for index, record in ipairs(App.LiveFeed) do
+        local frame = create("Frame", {Size = UDim2.new(1, 0, 0, 126), BackgroundColor3 = COLOR.Panel,
+            BorderSizePixel = 0, LayoutOrder = index}, App.LiveList)
+        round(frame, 9)
+        local name = label(frame, record.Time .. "  " .. record.Name,
+            UDim2.fromOffset(12, 6), UDim2.new(1, -24, 0, 22), false, 13)
+        name.TextColor3 = COLOR.Gold
+        local evidence = label(frame, record.Kind .. "  /  " .. record.Source,
+            UDim2.fromOffset(12, 29), UDim2.new(1, -24, 0, 18), true, 10)
+        evidence.TextColor3 = record.Source == "EVENT" and COLOR.Green or COLOR.Gold
+        local details
+        if record.Quantity then
+            details = "Count " .. record.Before .. " -> " .. record.After .. "  (+" .. record.Quantity .. ")\nVARIANT / rarity / berat: belum terbaca dari mastery"
+        elseif record.After ~= nil then
+            details = "Record mastery baru terlihat. Count saat muncul: " .. record.After .. "\nNilai sebelumnya belum diketahui."
+        elseif record.Kind ~= "ITEM BARU" then
+            details = "Record mastery baru terlihat setelah baseline.\nField Count belum disediakan game."
+        else
+            details = "ID " .. (record.ItemId or "belum terbaca") .. " | VARIANT " .. (record.Variant or "belum terbaca")
+                .. "\nRarity " .. (record.Rarity or "belum terbaca") .. " | Weight " .. (record.Weight or "belum terbaca")
+        end
+        local body = label(frame, details, UDim2.fromOffset(12, 48), UDim2.new(1, -24, 0, 49), false, 12)
+        body.TextWrapped, body.TextTruncate, body.TextYAlignment = true, Enum.TextTruncate.None, Enum.TextYAlignment.Top
+        label(frame, "Proses lokal " .. record.DelayMs .. " ms | " .. (record.UUID and "UUID baru; tangkapan belum terkonfirmasi" or "Perubahan data mastery"),
+            UDim2.fromOffset(12, 101), UDim2.new(1, -24, 0, 17), true, 10)
+    end
+    App.LiveList.CanvasPosition = Vector2.new(0, 0)
+end
+
 local function attachDrag(handle, target, bubble)
     local dragging, touch, start, startPosition, moved = false, nil, nil, nil, false
     App:Track(handle.InputBegan:Connect(function(input)
@@ -521,7 +838,7 @@ local function initialize()
         Active = true}, window)
     local title = label(header, "KIMS SCRIPT", UDim2.fromOffset(20, 12), UDim2.new(1, -140, 0, 25), false, 20)
     title.Font, title.TextColor3 = Enum.Font.GothamBold, COLOR.Gold
-    label(header, "ACCOUNT MONITOR  /  V" .. VERSION, UDim2.fromOffset(20, 40),
+    label(header, "LIVE CATCH TEST  /  V" .. VERSION, UDim2.fromOffset(20, 40),
         UDim2.new(1, -130, 0, 17), true, 10)
     button(header, "_", UDim2.new(1, -90, 0, 16), UDim2.fromOffset(30, 30), function() App:Minimize() end)
     button(header, "X", UDim2.new(1, -52, 0, 16), UDim2.fromOffset(30, 30), function() App:Destroy() end)
@@ -531,15 +848,31 @@ local function initialize()
         NumberSequenceKeypoint.new(0.5, 0.1), NumberSequenceKeypoint.new(1, 0.8)})}, line)
 
     App.TabButtons, App.Pages = {}, {}
-    local tabs = {"STAT AKUN", "INVENTORY", "DIAGNOSTIK", "PENGATURAN"}
+    local tabs = {"TANGKAPAN LIVE", "STAT AKUN", "INVENTORY", "DIAGNOSTIK", "PENGATURAN"}
+    local captions = {"LIVE", "STAT", "INVENTORY", "DIAG", "SETELAN"}
     for index, name in ipairs(tabs) do
         local tabName = name
-        App.TabButtons[name] = button(window, name, UDim2.new((index - 1) / 4, 18 - (index - 1) * 9, 0, 80),
-            UDim2.new(0.25, -14, 0, 30), function() App:SelectTab(tabName) end)
+        App.TabButtons[name] = button(window, captions[index], UDim2.new((index - 1) / 5, 18 - (index - 1) * 7.2, 0, 80),
+            UDim2.new(0.2, -12, 0, 30), function() App:SelectTab(tabName) end)
         App.TabButtons[name].TextSize = 10
         App.Pages[name] = create("Frame", {Name = "Page" .. index, Position = UDim2.fromOffset(18, 124),
             Size = UDim2.new(1, -36, 1, -188), BackgroundTransparency = 1, Visible = false}, window)
     end
+
+    local livePage = App.Pages["TANGKAPAN LIVE"]
+    App.LiveSummary = label(livePage, "Menunggu baseline...", UDim2.new(), UDim2.new(1, 0, 0, 22), false, 13)
+    App.LiveEventLabel = label(livePage, "EVENT DATA / POLL 0.5s", UDim2.fromOffset(0, 23), UDim2.new(1, 0, 0, 18), true, 10)
+    App.LiveToggle = button(livePage, "PANTAU: ON", UDim2.fromOffset(0, 50), UDim2.new(1 / 3, -5, 0, 30), function()
+        App.LiveEnabled = not App.LiveEnabled
+        App:ResetLive(false)
+        App:Toast(App.LiveEnabled and "Pantauan aktif; data saat ini menjadi baseline baru." or "Pantauan live dijeda.")
+    end)
+    button(livePage, "RESET TES", UDim2.new(1 / 3, 2, 0, 50), UDim2.new(1 / 3, -5, 0, 30), function()
+        App:ResetLive(true)
+        App:Toast("Tes direset. Tunggu SIAP lalu pancing 1 ikan.")
+    end)
+    button(livePage, "SALIN HASIL", UDim2.new(2 / 3, 4, 0, 50), UDim2.new(1 / 3, -4, 0, 30), function() App:CopyLiveReport() end)
+    App.LiveList = listFrame(livePage, 92)
 
     local statsPage = App.Pages["STAT AKUN"]
     App.StatsSummary = label(statsPage, "Memeriksa data akun...", UDim2.new(), UDim2.new(1, 0, 0, 22), false, 13)
@@ -638,9 +971,15 @@ local function initialize()
         self.InventorySummary.Text = self.InventoryState or "Inventory belum diperiksa"
         self.EquippedLabel.Text = "EquippedId: " .. self.Equipped
         self.StatusLabel.Text = (self.Busy and "Scan berjalan..." or ("Scan " .. self.LastScan)) .. "  |  " .. self.Source
-        self.AutoButton.Text = "AUTO REFRESH: " .. (self.AutoRefresh and "ON" or "OFF")
+        self.AutoButton.Text = "REFRESH STAT: " .. (self.AutoRefresh and "ON" or "OFF")
         self.IntervalButton.Text = "INTERVAL: " .. self.Interval .. " DETIK  (klik untuk ubah)"
-        if self.ActiveTab == "STAT AKUN" then
+        self.LiveSummary.Text = (self.LiveEnabled and self.LiveStatus or "PAUSE") .. " | " .. #self.LiveFeed .. " perubahan"
+        self.LiveEventLabel.Text = (self.DataConnection and "EVENT + POLL 0.5s" or "POLL 0.5s")
+            .. " | event " .. self.LiveSignals .. " | terakhir " .. self.LiveLastEvent
+        self.LiveToggle.Text = "PANTAU: " .. (self.LiveEnabled and "ON" or "OFF")
+        if self.ActiveTab == "TANGKAPAN LIVE" then
+            renderLive()
+        elseif self.ActiveTab == "STAT AKUN" then
             renderList(self.StatsList, self.Rows, self.StatsSearch.Text,
                 "Belum ada field stat terbaca. Buka Diagnostik lalu salin laporan pemeriksaan.")
         elseif self.ActiveTab == "INVENTORY" then
@@ -672,7 +1011,7 @@ local function initialize()
         end
     end))
     App:Track(gui.Destroying:Connect(function() App:Destroy() end))
-    App:SelectTab("STAT AKUN")
+    App:SelectTab("TANGKAPAN LIVE")
     pcall(function()
         window.BackgroundTransparency = 0.35
         Tween:Create(window, TweenInfo.new(0.25), {BackgroundTransparency = 0}):Play()
@@ -693,6 +1032,9 @@ local function initialize()
                     App:Toast("Pembacaan modul masih menunggu. Lihat Diagnostik.")
                 end
             else busySince, warned = nil, false end
+            if App.LiveEnabled and App.Data and not App.LivePending then
+                App:ObserveLive("POLL 0.5s", os.clock(), os.date("%H:%M:%S"))
+            end
             if App.AutoRefresh and not App.Busy and os.clock() - last >= App.Interval then
                 last = os.clock()
                 task.spawn(function() App:Scan(false) end)
